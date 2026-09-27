@@ -27,7 +27,7 @@
 .pm-grid { position: relative; margin: 8px 14px 4px 14px; overflow-x: auto; }
 .pm-grid-inner { position: relative; height: calc(var(--pm-pitch) * 2 + 14px); }
 .pm-grid-inner.rows-1 { height: calc(var(--pm-pitch) + 14px); }
-.pm-group { position: absolute; bottom: 0; font-size: 9px; color: var(--tblr-secondary); white-space: nowrap; }
+.pm-group { position: absolute; bottom: 0; font-size: 9px; color: var(--tblr-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .pm-port {
     position: absolute; width: var(--pm-size); height: var(--pm-size);
@@ -57,8 +57,8 @@
 .pm-chip.add { cursor: pointer; }
 .pm-chip.add:hover { border-color: var(--tblr-primary); }
 
-.pm-spoke .card-header { padding: .5rem .875rem; gap: 10px; display: flex; align-items: center; flex-wrap: wrap; }
-.pm-spoke .pm-toggle { background: none; border: 0; color: var(--tblr-secondary); padding: 0 4px; font-size: 12px; }
+.pm-hub .card-header, .pm-spoke .card-header { padding: .5rem .875rem; gap: 10px; display: flex; align-items: center; flex-wrap: wrap; }
+.pm-spoke .pm-toggle { background: none; border: 0; color: var(--tblr-secondary); padding: 0; width: 22px; height: 22px; font-size: 14px; line-height: 1; }
 .pm-spoke.pm-armed-target { border-color: var(--pm-pend); }
 .pm-compat { font-size: 11px; }
 
