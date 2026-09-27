@@ -1,0 +1,143 @@
+{% extends "base/layout.html" %}
+{% load form_helpers %}
+{% load i18n %}
+{% load portmap %}
+{% block head %}
+    <link rel="stylesheet" href="{% static_v 'netbox_portmap/css/workbench.css' %}">
+{% endblock head %}
+{% block title %}{% trans "Port Map" %}{% endblock title %}
+{% block content %}
+    <div class="row mb-3">
+        <div class="col-12">
+            <form method="get" class="card" id="pm-form">
+                <div class="card-body">
+                    <div class="row align-items-end">
+                        <div class="col-md-3">{% render_field form.site %}</div>
+                        <div class="col-md-4">{% render_field form.hub %}</div>
+                        <div class="col-md-3">{% render_field form.rack %}</div>
+                        <div class="col-md-2 text-end">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="mdi mdi-lan-connect" aria-hidden="true"></i> {% trans "Open" %}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+    {% if hub %}
+        <div class="pm-toolbar d-flex flex-wrap align-items-center gap-2 mb-2">
+            <span class="text-muted small">
+                {{ hub.site }}{% if hub.rack %} &middot; {{ hub.rack }}{% endif %}
+            </span>
+            <span id="pm-armed" class="badge bg-warning-lt text-warning" hidden></span>
+            <span class="ms-auto d-flex align-items-center gap-2">
+                <span id="pm-pending" class="badge bg-blue-lt" title="{% trans 'Changes not yet saved' %}">{% trans "Pending" %} 0</span>
+                {% if can_edit %}
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="pm-discard" disabled>{% trans "Discard" %}</button>
+                    <button type="button" class="btn btn-sm btn-success" id="pm-save" disabled>{% trans "Save" %}</button>
+                {% else %}
+                    <span class="badge bg-secondary-lt">{% trans "Read only — no cable permission" %}</span>
+                {% endif %}
+            </span>
+        </div>
+        <div class="row g-3">
+            <div class="col-12 col-xl-9">
+                <div class="pm-bench" id="pm-bench">
+                    <div class="card pm-hub" id="pm-hub"></div>
+                    <div class="pm-spokes" id="pm-spokes"></div>
+                    <svg class="pm-lines" id="pm-lines" aria-hidden="true"></svg>
+                </div>
+            </div>
+            <div class="col-12 col-xl-3">
+                <div class="card" id="pm-shelf">
+                    <div class="card-header d-flex align-items-center">
+                        <h5 class="mb-0">{% trans "Shelf" %}</h5>
+                        <span class="text-muted small ms-2" id="pm-shelf-rack"></span>
+                    </div>
+                    <div class="list-group list-group-flush pm-shelf-list" id="pm-shelf-list">
+                        <div class="list-group-item text-muted small">{% trans "Pick a rack above to list its devices." %}</div>
+                    </div>
+                    <div class="card-footer d-flex gap-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary flex-grow-1" id="pm-shelf-add" disabled>{% trans "Add selected as spokes" %}</button>
+                    </div>
+                </div>
+                <div class="card mt-3">
+                    <div class="card-header"><h5 class="mb-0">{% trans "Connections" %}</h5></div>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover mb-0 pm-connections" id="pm-connections">
+                            <thead><tr><th>{% trans "Port" %}</th><th>{% trans "Peer" %}</th><th>{% trans "Cable" %}</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="text-muted small mt-2 pm-legend">
+                    <span><i class="pm-sw pm-sw-on"></i>{% trans "cabled, peer on screen" %}</span>
+                    <span><i class="pm-sw pm-sw-far"></i>{% trans "cabled, peer not on screen" %}</span>
+                    <span><i class="pm-sw pm-sw-free"></i>{% trans "free" %}</span>
+                    <span><i class="pm-sw pm-sw-pend"></i>{% trans "pending" %}</span>
+                    <br>
+                    <span><i class="pm-sw" style="background: var(--pm-copper)"></i>RJ45</span>
+                    <span><i class="pm-sw" style="background: var(--pm-sfp)"></i>SFP</span>
+                    <span><i class="pm-sw" style="background: var(--pm-qsfp)"></i>QSFP</span>
+                    <span><i class="pm-sw" style="background: var(--pm-stack)"></i>Stack</span>
+                </div>
+            </div>
+        </div>
+
+        {# Cable editor #}
+        <div class="offcanvas offcanvas-end" tabindex="-1" id="pm-editor" aria-labelledby="pm-editor-title">
+            <div class="offcanvas-header">
+                <h5 class="offcanvas-title" id="pm-editor-title">{% trans "Cable" %}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="{% trans 'Close' %}"></button>
+            </div>
+            <div class="offcanvas-body">
+                <div class="pm-editor-ends mb-3" id="pm-editor-ends"></div>
+                <div id="pm-editor-verdict" class="mb-3"></div>
+                <div class="mb-2">
+                    <label class="form-label" for="pm-editor-type">{% trans "Type" %}</label>
+                    <select class="form-select" id="pm-editor-type"></select>
+                </div>
+                <div class="row g-2 mb-2">
+                    <div class="col-7">
+                        <label class="form-label" for="pm-editor-length">{% trans "Length" %}</label>
+                        <input class="form-control" id="pm-editor-length" type="number" step="0.01" min="0">
+                    </div>
+                    <div class="col-5">
+                        <label class="form-label" for="pm-editor-unit">{% trans "Unit" %}</label>
+                        <select class="form-select" id="pm-editor-unit"></select>
+                    </div>
+                </div>
+                <div class="text-muted small mb-3" id="pm-editor-hint"></div>
+                <div class="mb-2">
+                    <label class="form-label" for="pm-editor-label">{% trans "Label" %}</label>
+                    <input class="form-control" id="pm-editor-label" type="text" maxlength="100">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label" for="pm-editor-status">{% trans "Status" %}</label>
+                    <select class="form-select" id="pm-editor-status"></select>
+                </div>
+            </div>
+            <div class="offcanvas-footer p-3 border-top d-flex gap-2">
+                <button type="button" class="btn btn-outline-danger" id="pm-editor-delete">{% trans "Delete" %}</button>
+                <button type="button" class="btn btn-secondary ms-auto" data-bs-dismiss="offcanvas">{% trans "Close" %}</button>
+                <button type="button" class="btn btn-primary" id="pm-editor-apply">{% trans "Apply" %}</button>
+            </div>
+        </div>
+    {% endif %}
+{% endblock content %}
+{% block javascript %}
+    {% if hub %}
+        <script type="application/json" id="pm-config">{{ pm_config|safe }}</script>
+        <script type="text/javascript">
+            window.PORTMAP = {
+                hubId: {{ hub.pk }},
+                api: "{% url 'plugins-api:netbox_portmap-api:api-root' %}",
+                csrf: "{{ csrf_token }}",
+                canEdit: {{ can_edit|yesno:"true,false" }},
+                rackId: "{{ request.GET.rack|default:'' }}",
+            };
+        </script>
+        <script src="{% static_v 'netbox_portmap/js/workbench.js' %}" defer></script>
+    {% endif %}
+{% endblock javascript %}

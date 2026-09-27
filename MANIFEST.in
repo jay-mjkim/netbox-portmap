@@ -1,0 +1,3 @@
+include README.md LICENSE
+recursive-include netbox_portmap/templates *
+recursive-include netbox_portmap/static *
