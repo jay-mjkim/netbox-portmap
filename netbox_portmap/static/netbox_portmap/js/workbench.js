@@ -88,6 +88,8 @@
     pending: { create: [], update: new Map(), delete: new Set() },
     armed: null, // interface id
     compat: new Map(), // interface id -> verdict, while armed
+    focus: null, // device id of the spoke sitting right under the hub; only its cables get lines
+    hoverKey: null, // link key under the pointer, drawn even when not in focus
     seq: 0,
   };
 
@@ -171,6 +173,16 @@
     return n;
   }
 
+  function cablesToCard(c, other) {
+    if (!other) return 0;
+    let n = 0;
+    for (const p of c.ports) {
+      const cab = cableOf(p.id);
+      if (cab && !cab.deleted && cab.peerDeviceId === other.device.id) n++;
+    }
+    return n;
+  }
+
   function renderCard(c) {
     const d = c.device;
     c.el.replaceChildren();
@@ -180,9 +192,15 @@
       return cab && !cab.deleted;
     }).length;
 
+    const toHub = c.isHub ? 0 : cablesToCard(c, state.hub);
     const header = el(
       "div",
-      { class: "card-header" },
+      {
+        class: "card-header",
+        title: c.isHub ? null : "Click to bring this device under the hub and show its cables",
+        // Header click focuses the spoke; links, buttons and the toggle keep their own behaviour.
+        onclick: (e) => { if (!c.isHub && !e.target.closest("a, button")) setFocus(c); },
+      },
       c.isHub
         ? null
         : el(
@@ -194,14 +212,17 @@
       el("span", { class: "text-muted small" }, d.device_type),
       where ? el("span", { class: "text-muted small" }, where) : null,
       c.isHub ? el("span", { class: "badge bg-primary-lt ms-1" }, "hub") : null,
+      !c.isHub && state.focus === d.id ? el("span", { class: "badge bg-primary-lt ms-1" }, "focus") : null,
       el("span", { class: "ms-auto d-flex align-items-center gap-2" },
         el("span", { class: "pm-compat", dataset: { compat: d.id } }),
+        !c.isHub && toHub ? el("span", { class: "text-muted small", title: "cables to the hub" }, `${toHub} to hub`) : null,
         el("span", { class: "text-muted small", title: "cabled / total ports" }, `${cabled} / ${c.ports.length}`),
         !c.isHub && cablesToBench(c) === 0 && !c.busy
           ? el("button", { type: "button", class: "btn-close", "aria-label": "Remove from bench", onclick: () => removeSpoke(c) })
           : null,
       ),
     );
+    c.el.classList.toggle("pm-focus", !c.isHub && state.focus === d.id);
     c.el.append(header);
 
     if (c.isHub || c.expanded) {
@@ -214,6 +235,10 @@
   function renderGrid(c) {
     const g = c.grid;
     const inner = el("div", { class: `pm-grid-inner rows-${g.rows}`, style: `width:${Math.max(g.cols, 1) * PITCH}px` });
+    // Stubs (tile centre -> column edge) live under the tiles, so a line to a top-row port
+    // visibly passes behind the tile below it instead of being drawn across it.
+    const stubs = svgEl("svg", { class: "pm-stubs", width: Math.max(g.cols, 1) * PITCH, height: g.rows * PITCH });
+    inner.append(stubs);
     for (const p of c.ports) {
       inner.append(
         el(
@@ -323,28 +348,49 @@
     const r = tile.getBoundingClientRect();
     const grid = tile.closest(".pm-grid").getBoundingClientRect();
     if (r.right < grid.left || r.left > grid.right) return null; // scrolled out of its grid
+    const inner = tile.parentElement;
+    const ir = inner.getBoundingClientRect();
+    const rows = entry.card.grid.rows;
     return {
+      card: entry.card,
       x: r.left + r.width / 2 - benchRect.left,
-      top: r.top - benchRect.top,
-      bottom: r.bottom - benchRect.top,
+      cy: r.top + r.height / 2 - benchRect.top,
+      // Column edges: where the line leaves the grid (see stubs in renderGrid).
+      colTop: ir.top - benchRect.top,
+      colBottom: ir.top + rows * PITCH - 4 - benchRect.top,
       family: entry.port.family,
+      stubs: inner.querySelector(".pm-stubs"),
+      lx: r.left + r.width / 2 - ir.left,
+      ly: r.top + r.height / 2 - ir.top,
     };
   }
 
+  /** Cables to draw: hub <-> focused spoke (adjacent cards, so lines cross nothing), staged ones,
+   *  and the one under the pointer. Everything else is visible as tile state and in the list. */
   function visibleLinks() {
     const links = new Map();
+    const hubId = state.hub ? state.hub.device.id : null;
+    const focusId = state.focus;
+    const wanted = (aId, bId, key) => {
+      if (key === state.hoverKey) return true;
+      const da = state.ports.get(aId).card.device.id;
+      const db = state.ports.get(bId).card.device.id;
+      return (da === hubId && db === focusId) || (da === focusId && db === hubId);
+    };
     for (const c of state.pending.create) links.set(`p${c.ref}`, { a: c.a, b: c.b, pending: true, key: `p${c.ref}` });
     for (const [id] of state.ports) {
       const cab = cableOf(id);
       if (!cab || cab.kind !== "existing" || cab.deleted || cab.peerPortId == null) continue;
       if (!state.ports.has(cab.peerPortId)) continue;
-      links.set(`c${cab.id}`, { a: id, b: cab.peerPortId, pending: false, key: `c${cab.id}` });
+      const key = `c${cab.id}`;
+      if (wanted(id, cab.peerPortId, key)) links.set(key, { a: id, b: cab.peerPortId, pending: false, key });
     }
     return [...links.values()];
   }
 
   function drawLines() {
     svg.replaceChildren();
+    for (const s of bench.querySelectorAll(".pm-stubs")) s.replaceChildren();
     const benchRect = bench.getBoundingClientRect();
     svg.setAttribute("width", benchRect.width);
     svg.setAttribute("height", benchRect.height);
@@ -353,29 +399,40 @@
       const a = tileAnchor(link.a, benchRect);
       const b = tileAnchor(link.b, benchRect);
       if (!a || !b) continue;
-      const [top, bot] = a.top <= b.top ? [a, b] : [b, a];
-      const y1 = top.bottom;
-      const y2 = bot.top;
-      const dy = Math.max(18, (y2 - y1) / 2);
-      const colour = colours.getPropertyValue(`--pm-${top.family}`).trim() || colours.getPropertyValue("--pm-other").trim();
-      const path = svgEl("path", {
-        class: `pm-line${link.pending ? " pend" : ""}`,
+      const hi = link.key === state.hoverKey;
+      const cls = `pm-line${link.pending ? " pend" : ""}${hi ? " hi" : ""}`;
+      const colour = colours.getPropertyValue(`--pm-${a.family}`).trim() || colours.getPropertyValue("--pm-other").trim();
+      const [top, bot] = a.cy <= b.cy ? [a, b] : [b, a];
+      // Stubs under the tiles: tile centre -> column edge, in each grid's own SVG.
+      top.stubs.append(svgEl("line", { class: cls, x1: top.lx, y1: top.ly, x2: top.lx, y2: top.card.grid.rows * PITCH - 4, stroke: colour, "data-key": link.key }));
+      bot.stubs.append(svgEl("line", { class: cls, x1: bot.lx, y1: 0, x2: bot.lx, y2: bot.ly, stroke: colour, "data-key": link.key }));
+      const y1 = top.colBottom;
+      const y2 = bot.colTop;
+      const dy = Math.max(24, Math.min(80, (y2 - y1) / 2));
+      svg.append(svgEl("path", {
+        class: cls,
         d: `M ${top.x} ${y1} C ${top.x} ${y1 + dy}, ${bot.x} ${y2 - dy}, ${bot.x} ${y2}`,
         stroke: colour,
         "data-key": link.key,
-      });
-      svg.append(path);
+      }));
       for (const [x, y] of [[top.x, y1], [bot.x, y2]]) {
-        svg.append(svgEl("circle", { class: "pm-dot", cx: x, cy: y, r: 3, fill: colour, "data-key": link.key }));
+        svg.append(svgEl("circle", { class: "pm-dot", cx: x, cy: y, r: 2.5, fill: colour, "data-key": link.key }));
       }
     }
+  }
+
+  function linkKeyOf(portId) {
+    const cab = cableOf(portId);
+    if (!cab || cab.deleted) return null;
+    return cab.kind === "pending" ? `p${cab.ref}` : `c${cab.id}`;
   }
 
   function highlight(portId, on) {
     const cab = cableOf(portId);
     if (!cab || cab.deleted) return;
-    const key = cab.kind === "pending" ? `p${cab.ref}` : `c${cab.id}`;
-    for (const n of svg.querySelectorAll(`[data-key="${key}"]`)) n.classList.toggle("hi", on);
+    const key = linkKeyOf(portId);
+    state.hoverKey = on ? key : null;
+    drawLines();
     for (const id of [portId, cab.peerPortId]) {
       const entry = id != null && state.ports.get(id);
       const tile = entry && entry.card.el.querySelector(`.pm-port[data-id="${id}"]`);
@@ -383,6 +440,16 @@
     }
     const row = $(`#pm-connections tr[data-key="${key}"]`);
     if (row) row.classList.toggle("hi", on);
+  }
+
+  /** Put a spoke right under the hub and draw its cables. */
+  function setFocus(c) {
+    if (!c || c.isHub) return;
+    state.focus = c.device.id;
+    if (!c.expanded) c.expanded = true;
+    state.spokes = [c, ...state.spokes.filter((s) => s !== c)];
+    $("#pm-spokes").prepend(c.el);
+    rerender();
   }
 
   // --------------------------------------------------------------- arming
@@ -700,6 +767,7 @@
       state.spokes.push(c);
       registerPorts(c);
       $("#pm-spokes").append(c.el);
+      if (state.focus == null) state.focus = deviceId; // the first spoke starts focused
       rerender();
       return c;
     } catch (e) {
@@ -717,6 +785,7 @@
     state.cards.delete(c.device.id);
     state.spokes = state.spokes.filter((s) => s !== c);
     c.el.remove();
+    if (state.focus === c.device.id) state.focus = state.spokes.length ? state.spokes[0].device.id : null;
     rerender();
   }
 

@@ -21,7 +21,10 @@
 
 .pm-bench { position: relative; }
 .pm-hub { position: sticky; top: 0; z-index: 2; }
-.pm-spokes { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.pm-spokes { display: flex; flex-direction: column; gap: 8px; margin-top: 34px; }   /* room for the hub -> focus curves */
+.pm-spoke .card-header { cursor: pointer; }
+.pm-spoke.pm-focus { border-color: var(--tblr-primary); box-shadow: 0 0 0 1px var(--tblr-primary); }
+.pm-stubs { position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none; overflow: visible; }
 .pm-lines { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; z-index: 1; }
 
 .pm-grid { position: relative; margin: 8px 14px 4px 14px; overflow-x: auto; }
@@ -30,7 +33,7 @@
 .pm-group { position: absolute; bottom: 0; font-size: 9px; color: var(--tblr-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .pm-port {
-    position: absolute; width: var(--pm-size); height: var(--pm-size);
+    position: absolute; z-index: 1; width: var(--pm-size); height: var(--pm-size);
     border-radius: 4px; border: 0; padding: 0; box-sizing: border-box;
     display: flex; align-items: center; justify-content: center;
     font-size: 9px; font-weight: 600; color: var(--pm-tile-fg); background: var(--pm-tile);
@@ -77,7 +80,7 @@
 .pm-sw-pend { background: var(--pm-pend); }
 
 .pm-editor-ends { font-size: 13px; padding: 10px; border: 1px solid var(--tblr-border-color); border-radius: 4px; background: var(--tblr-bg-surface-secondary); }
-.pm-line { fill: none; stroke-width: 2; stroke-opacity: .85; }
+.pm-line { fill: none; stroke-width: 1.6; stroke-opacity: .8; stroke-linecap: round; }
 .pm-line.pend { stroke-dasharray: 6 5; }
 .pm-line.hi { stroke-width: 3; stroke-opacity: 1; }
 .pm-dot { stroke: none; }
