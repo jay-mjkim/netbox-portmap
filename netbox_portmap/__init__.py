@@ -34,11 +34,12 @@ class NetBoxPortMapConfig(PluginConfig):
         # Warn when the two ends advertise different speeds (e.g. 1G <-> 10G).
         "warn_speed_mismatch": True,
         # Cable type to suggest for a compatible pair, by media family of the pair.
+        # Values are NetBox cable types (dcim.choices.CableTypeChoices); "" leaves the type unset.
         "cable_type_defaults": {
             "copper": "cat6a",
             "sfp": "mmf-om4",
             "qsfp": "aoc",
-            "stack": "other",
+            "stack": "",
         },
         # Length suggestion from rack positions. None disables the suggestion.
         # Distance = |rack index difference| * rack_pitch + vertical run; the

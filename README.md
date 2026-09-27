@@ -76,7 +76,7 @@ PLUGINS_CONFIG = {
         "warn_mgmt_to_data": True,  # management-only port <-> data port
         "warn_speed_mismatch": True,  # e.g. 1000base-t <-> 10gbase-t
         # Cable type suggested for a compatible pair, by media family.
-        "cable_type_defaults": {"copper": "cat6a", "sfp": "mmf-om4", "qsfp": "aoc", "stack": "other"},
+        "cable_type_defaults": {"copper": "cat6a", "sfp": "mmf-om4", "qsfp": "aoc", "stack": ""},  # NetBox cable types; "" = unset
         # Length suggestion from rack positions: |rack index difference| * rack_pitch + vertical,
         # rounded up to the next entry of "sizes". The rack index is the trailing number of the
         # rack name ("A-07" -> 7). Set to None to disable.
