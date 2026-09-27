@@ -351,16 +351,18 @@
     const inner = tile.parentElement;
     const ir = inner.getBoundingClientRect();
     const rows = entry.card.grid.rows;
+    // Ports stacked in one column would get identical lines; nudge by row so both stay visible.
+    const dx = (entry.port.row - (rows - 1) / 2) * 6;
     return {
       card: entry.card,
-      x: r.left + r.width / 2 - benchRect.left,
+      x: r.left + r.width / 2 + dx - benchRect.left,
       cy: r.top + r.height / 2 - benchRect.top,
       // Column edges: where the line leaves the grid (see stubs in renderGrid).
       colTop: ir.top - benchRect.top,
       colBottom: ir.top + rows * PITCH - 4 - benchRect.top,
       family: entry.port.family,
       stubs: inner.querySelector(".pm-stubs"),
-      lx: r.left + r.width / 2 - ir.left,
+      lx: r.left + r.width / 2 + dx - ir.left,
       ly: r.top + r.height / 2 - ir.top,
     };
   }
