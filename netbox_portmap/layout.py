@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass, field
 
 _NAME_RE = re.compile(
-    r"^(?P<prefix>[A-Za-z][A-Za-z\-_ ]*?)"  # letters: 'TenGigabitEthernet', 'eno', 'IB'
+    r"^(?P<prefix>[A-Za-z][A-Za-z\-_ ]*?)?"  # letters: 'TenGigabitEthernet', 'eno', 'IB' (or none: '1/1/1')
     r"(?P<slot>(?:\d+/)*\d+/)?"  # optional 'x/y/' slot path
     r"(?P<port>\d+)$"  # trailing port number
 )
@@ -41,7 +41,7 @@ def _parse(name: str):
     m = _NAME_RE.match(name.strip())
     if not m:
         return name, "", None
-    return m.group("prefix"), m.group("slot") or "", int(m.group("port"))
+    return m.group("prefix") or "", m.group("slot") or "", int(m.group("port"))
 
 
 def arrange(ports: list[dict]) -> dict:
@@ -60,7 +60,7 @@ def arrange(ports: list[dict]) -> dict:
         prefix, slot, number = _parse(p["name"])
         key = f"{prefix}|{slot}"
         if key not in groups:
-            groups[key] = Group(key, f"{prefix}{slot}".rstrip("/"))
+            groups[key] = Group(key, f"{prefix}{slot}".rstrip("/") or "ports")
             order.append(key)
         groups[key].ports.append((number if number is not None else 0, p))
 

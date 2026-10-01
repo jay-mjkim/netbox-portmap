@@ -31,6 +31,14 @@ class SuggestTest(SimpleTestCase):
         self.assertIsNone(lengths.suggest(device(None), device("A-01")))
         self.assertIsNone(lengths.suggest(device("left", pk=1), device("right", pk=2)))
 
+    def test_different_rows_give_no_suggestion(self):
+        # Same trailing number, different row: not "the same position".
+        self.assertIsNone(lengths.suggest(device("3F-03-12", pk=1), device("3F-04-12", pk=2)))
+        self.assertIsNone(lengths.suggest(device("A-07", pk=1), device("B-09", pk=2)))
+
+    def test_same_row_with_unpadded_numbers(self):
+        self.assertEqual(lengths.suggest(device("R01", pk=1), device("R2", pk=2)), (5, "m"))
+
     def test_different_locations(self):
         self.assertIsNone(lengths.suggest(device("A-01", pk=1, location=1), device("A-02", pk=2, location=2)))
 

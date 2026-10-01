@@ -1,7 +1,11 @@
 from types import SimpleNamespace
 
+from core.models import ObjectType
 from dcim.models import Cable, Device, DeviceRole, DeviceType, Interface, Manufacturer, Rack, Site
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
+from users.models import ObjectPermission
 from utilities.testing import APITestCase
 
 
@@ -84,9 +88,59 @@ class ReadEndpointsTest(APITestCase):
         body = self.client.get(url, **self.header).json()
         self.assertEqual([d["name"] for d in body["devices"]], ["sw1", "srv1"])  # top of rack first, no PDU
 
+    def test_ports_query_count_does_not_grow_with_cables(self):
+        url = reverse("plugins-api:netbox_portmap-api:portmap-device-ports", kwargs={"pk": self.f.sw.pk})
+        with CaptureQueriesContext(connection) as one:
+            self.client.get(url, **self.header)
+        extra = []
+        for i, port in enumerate(self.f.sw_ports[1:5]):
+            peer = Interface.objects.create(device=self.f.srv2, name=f"eth{i}", type="1000base-t")
+            cable = Cable(a_terminations=[port], b_terminations=[peer], type="cat6")
+            cable.full_clean()
+            cable.save()
+            extra.append(peer)
+        with CaptureQueriesContext(connection) as five:
+            body = self.client.get(url, **self.header).json()
+        # Peers are resolved in bulk: four more cables must not mean a dozen more queries.
+        self.assertLessEqual(len(five), len(one) + 2)
+        by_name = {p["name"]: p for p in body["ports"]}
+        self.assertEqual(by_name["GigabitEthernet1/0/2"]["peer"]["device"], "srv2")
+        self.assertEqual(by_name["GigabitEthernet1/0/2"]["peer"]["id"], extra[0].pk)
+        self.assertEqual(by_name["GigabitEthernet1/0/1"]["peer"]["device"], "srv1")
+        self.assertIsNone(by_name["GigabitEthernet1/0/6"]["peer"])
+
     def test_ports_requires_auth(self):
         url = reverse("plugins-api:netbox_portmap-api:portmap-device-ports", kwargs={"pk": self.f.sw.pk})
         self.assertIn(self.client.get(url).status_code, (401, 403))
+
+
+class RestrictedPeersTest(APITestCase):
+    """A user who may not see a device must not learn its name or position from the peer list."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.f = build_fixture()
+        cable = Cable(a_terminations=[cls.f.sw_ports[1]], b_terminations=[cls.f.srv2_eno0], type="cat6")
+        cable.full_clean()
+        cable.save()
+
+    def setUp(self):
+        super().setUp()
+        perm = ObjectPermission.objects.create(
+            name="view all but srv2", actions=["view"], constraints={"name__in": ["sw1", "srv1"]}
+        )
+        perm.object_types.set([ObjectType.objects.get(app_label="dcim", model="device")])
+        perm.users.add(self.user)
+        for model in ("interface", "cable"):
+            p = ObjectPermission.objects.create(name=f"view {model}", actions=["view"])
+            p.object_types.set([ObjectType.objects.get(app_label="dcim", model=model)])
+            p.users.add(self.user)
+
+    def test_peers_hide_devices_the_user_cannot_view(self):
+        url = reverse("plugins-api:netbox_portmap-api:portmap-device-peers", kwargs={"pk": self.f.sw.pk})
+        res = self.client.get(url, **self.header)
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual([p["name"] for p in res.json()["peers"]], ["srv1"])
 
 
 class CheckTest(APITestCase):
@@ -220,6 +274,16 @@ class CommitTest(APITestCase):
         port = Interface.objects.get(pk=self.f.sw_ports[0].pk)
         self.assertIsNotNone(port.cable_id)
         self.assertNotEqual(port.cable_id, self.f.cable.pk)
+
+    def test_validation_error_names_the_item(self):
+        body = self.commit({"update": [{"id": self.f.cable.pk, "length": 5, "length_unit": ""}]}, expect=400)
+        self.assertFalse(body["applied"])
+        self.assertEqual(body["errors"][0]["op"], "update")
+        self.assertEqual(body["errors"][0]["id"], self.f.cable.pk)
+        self.assertIn("unit", body["errors"][0]["error"])  # a readable message, not a dict repr
+        self.assertNotIn("{", body["errors"][0]["error"])
+        self.f.cable.refresh_from_db()
+        self.assertIsNone(self.f.cable.length)
 
     def test_all_or_nothing(self):
         before = Cable.objects.count()

@@ -10,16 +10,20 @@ from netbox.plugins import get_plugin_config
 _NUM_RE = re.compile(r"(\d+)(?!.*\d)")  # last number in a rack name
 
 
-def _rack_index(rack) -> int | None:
-    """A rack's position along its row, from the trailing number of its name.
+def _rack_position(rack) -> tuple[str, int] | None:
+    """A rack's row and position along it, from its name.
 
-    Racks are named by position in almost every DC ("A-07", "3F-03-12"); the
-    trailing number is the best generic proxy for distance along a row.
+    Racks are named by position in almost every DC ("A-07", "3F-03-12"): the
+    trailing number is the position along the row and everything before it names
+    the row. Only racks in the same row can be compared this way.
     """
     if rack is None:
         return None
-    m = _NUM_RE.search(rack.name or "")
-    return int(m.group(1)) if m else None
+    name = rack.name or ""
+    m = _NUM_RE.search(name)
+    if not m:
+        return None
+    return name[: m.start(1)], int(m.group(1))
 
 
 def suggest(a_device, b_device):
@@ -33,10 +37,12 @@ def suggest(a_device, b_device):
     if ra.pk == rb.pk:
         raw = float(model.get("same_rack", 3.0))
     else:
-        ia, ib = _rack_index(ra), _rack_index(rb)
-        if ia is None or ib is None or ra.location_id != rb.location_id:
+        pa, pb = _rack_position(ra), _rack_position(rb)
+        # Different rows ("3F-03-12" vs "3F-04-12"): the distance is not along a row and
+        # cannot be read from the names. No suggestion beats a confidently short one.
+        if pa is None or pb is None or pa[0] != pb[0] or ra.location_id != rb.location_id:
             return None
-        raw = abs(ia - ib) * float(model.get("rack_pitch", 0.6)) + float(model.get("vertical", 3.0))
+        raw = abs(pa[1] - pb[1]) * float(model.get("rack_pitch", 0.6)) + float(model.get("vertical", 3.0))
     sizes = sorted(model.get("sizes") or [])
     length = next((s for s in sizes if s >= raw), sizes[-1] if sizes else math.ceil(raw))
     return length, model.get("unit", "m")

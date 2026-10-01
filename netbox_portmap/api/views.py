@@ -16,6 +16,7 @@ half-finished session never leaves partial cabling behind.
 from __future__ import annotations
 
 from dcim.models import Cable, Device, Interface, Rack
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from netbox.api.authentication import TokenPermissions
@@ -51,7 +52,7 @@ class DeviceViewSet(viewsets.ViewSet):
 
     @action(detail=True, methods=["get"])
     def peers(self, request, pk=None):
-        return Response({"peers": data.peer_devices(self._device(request, pk))})
+        return Response({"peers": data.peer_devices(self._device(request, pk), request.user)})
 
 
 class RackViewSet(viewsets.ViewSet):
@@ -205,7 +206,11 @@ class CommitViewSet(viewsets.ViewSet):
                                 f,
                                 item[f] if item[f] != "" or f in ("label", "color", "type", "length_unit") else None,
                             )
-                    cable.full_clean()
+                    try:
+                        cable.full_clean()
+                    except ValidationError as exc:
+                        errors.append({"op": "update", "id": item["id"], "error": _messages(exc)})
+                        continue
                     cable.save()
                 ifaces = Interface.objects.restrict(user, "view").select_related("device__rack")
                 for item in payload["create"]:
@@ -231,14 +236,23 @@ class CommitViewSet(viewsets.ViewSet):
                         length=item.get("length") if item.get("length") is not None else verdict.get("length"),
                         length_unit=item.get("length_unit") or verdict.get("length_unit") or "",
                     )
-                    cable.full_clean()
+                    try:
+                        cable.full_clean()
+                    except ValidationError as exc:
+                        errors.append({"op": "create", "ref": item["ref"], "error": _messages(exc)})
+                        continue
                     cable.save()
                     created.append({"ref": item["ref"], "cable": data.cable_summary(cable)})
                 if errors:
                     raise _Rollback()
         except _Rollback:
             return Response({"applied": False, "errors": errors}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as exc:  # validation errors from Cable.full_clean, etc.
+        except ValidationError as exc:  # Cable.full_clean
+            return Response(
+                {"applied": False, "errors": [{"op": "commit", "error": _messages(exc)}]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as exc:  # anything else NetBox raises while saving
             return Response(
                 {"applied": False, "errors": [{"op": "commit", "error": str(exc)}]}, status=status.HTTP_400_BAD_REQUEST
             )
@@ -246,6 +260,16 @@ class CommitViewSet(viewsets.ViewSet):
             {"applied": True, "created": created, "updated": len(payload["update"]), "deleted": len(payload["delete"])},
             status=status.HTTP_201_CREATED,
         )
+
+
+def _messages(exc: ValidationError) -> str:
+    """'length_unit: You must specify a unit ...' rather than the repr of an error dict."""
+    if hasattr(exc, "message_dict"):
+        return "; ".join(
+            f"{field}: {' '.join(msgs)}" if field != "__all__" else " ".join(msgs)
+            for field, msgs in exc.message_dict.items()
+        )
+    return " ".join(exc.messages)
 
 
 class _Rollback(Exception):
