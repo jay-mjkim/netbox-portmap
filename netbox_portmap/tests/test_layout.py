@@ -50,5 +50,11 @@ class ArrangeTest(SimpleTestCase):
         self.assertEqual({p["col"] for p in ps}, {0, 2})
         self.assertEqual(grid["cols"], 3)
 
+    def test_numeric_names_form_one_group(self):
+        ps = ports("1", "2", "3", "4", "1/1/1", "1/1/2")
+        grid = layout.arrange(ps)
+        self.assertEqual([g["label"] for g in grid["groups"]], ["ports", "1/1"])
+        self.assertEqual([g["count"] for g in grid["groups"]], [4, 2])
+
     def test_empty(self):
         self.assertEqual(layout.arrange([]), {"cols": 1, "rows": 1, "groups": []})

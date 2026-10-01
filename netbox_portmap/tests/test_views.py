@@ -30,6 +30,14 @@ class WorkbenchViewTest(TestCase):
         self.assertContains(res, "canEdit: true")
         self.assertContains(res, "workbench.js?v=")
 
+    def test_rack_param_is_escaped_in_script(self):
+        res = self.client.get(
+            reverse("plugins:netbox_portmap:workbench"), {"hub": self.f.sw.pk, "rack": '1"; alert(1); "'}
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertNotContains(res, '"; alert(1); "')
+        self.assertContains(res, 'rackId: "1\\u0022\\u003B alert(1)')
+
     def test_device_tab(self):
         res = self.client.get(reverse("plugins:netbox_portmap:device_portmap", kwargs={"pk": self.f.srv1.pk}))
         self.assertEqual(res.status_code, 200)

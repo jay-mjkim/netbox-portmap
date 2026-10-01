@@ -16,7 +16,7 @@ def _choices(choice_set):
     out = []
     for item in choice_set.CHOICES:  # (value, label[, color]) or (group, [(value, label[, color]), ...])
         value, label = item[0], item[1]
-        if isinstance(label, (list, tuple)):
+        if isinstance(label, list | tuple):
             out.append({"group": str(value), "options": [[opt[0], str(opt[1])] for opt in label]})
         else:
             out.append({"group": None, "options": [[value, str(label)]]})
