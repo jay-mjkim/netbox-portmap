@@ -141,10 +141,9 @@
     };
   }
 
-  const onScreen = (deviceId) => {
-    const c = card(deviceId);
-    return !!c && (c.isHub || c.expanded);
-  };
+  /** A card whose ports are drawn: the hub, or an expanded spoke not hidden by the filter. */
+  const showsPorts = (c) => !!c && (c.isHub || (c.expanded && !c.filteredOut));
+  const onScreen = (deviceId) => showsPorts(card(deviceId));
 
   const pendingCount = () => state.pending.create.length + state.pending.update.size + state.pending.delete.size;
 
@@ -200,6 +199,16 @@
         title: c.isHub ? null : "Click to bring this device under the hub and show its cables",
         // Header click focuses the spoke; links, buttons and the toggle keep their own behaviour.
         onclick: (e) => { if (!c.isHub && !e.target.closest("a, button")) setFocus(c); },
+        // ... and so does Enter/Space for keyboard users.
+        tabindex: c.isHub ? null : "0",
+        role: c.isHub ? null : "button",
+        "aria-pressed": c.isHub ? null : String(state.focus === d.id),
+        onkeydown: (e) => {
+          if (c.isHub || e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+          e.preventDefault();
+          setFocus(c);
+          c.el.querySelector(".card-header")?.focus({ preventScroll: true }); // the header was re-rendered
+        },
       },
       c.isHub
         ? null
@@ -321,7 +330,7 @@
       const badge = c.el.querySelector(`[data-compat="${c.device.id}"]`);
       if (!badge) continue;
       badge.replaceChildren();
-      if (armed == null || c.device.id === armedDev || !(c.isHub || c.expanded)) continue;
+      if (armed == null || c.device.id === armedDev || !showsPorts(c)) continue;
       const free = c.ports.filter((p) => !cableOf(p.id) || cableOf(p.id).deleted);
       const okCount = free.filter((p) => (state.compat.get(p.id) || {}).level !== "block" && state.compat.has(p.id)).length;
       badge.append(el("span", { class: `badge ${okCount ? "bg-blue-lt" : "bg-secondary-lt"}` }, `compatible ${okCount} / ${free.length}`));
@@ -342,7 +351,7 @@
 
   function tileAnchor(portId, benchRect) {
     const entry = state.ports.get(portId);
-    if (!entry || !(entry.card.isHub || entry.card.expanded)) return null;
+    if (!entry || !showsPorts(entry.card)) return null;
     const tile = entry.card.el.querySelector(`.pm-port[data-id="${portId}"]`);
     if (!tile) return null;
     const r = tile.getBoundingClientRect();
@@ -466,7 +475,7 @@
     refreshTiles();
     const targets = [];
     for (const [id, entry] of state.ports) {
-      if (entry.card.device.id === c.device.id || !(entry.card.isHub || entry.card.expanded)) continue;
+      if (entry.card.device.id === c.device.id || !showsPorts(entry.card)) continue;
       targets.push(id);
     }
     if (!targets.length) return;
@@ -501,7 +510,14 @@
       return;
     }
     if (portId === state.armed) return disarm();
-    if (c.device.id === armedCard().device.id) return arm(portId); // pick a different port on the same device
+    if (c.device.id === armedCard().device.id) {
+      // Another port on the same device: switch to it if it is free, otherwise show its cable.
+      if (cab && !cab.deleted) {
+        disarm();
+        return openEditor(cab, portId);
+      }
+      return arm(portId);
+    }
     const v = state.compat.get(portId);
     if (!v) return toast("Still checking compatibility, try again", "warning");
     if (v.level === "block") return toast(`Cannot connect: ${v.reason}`, "warning");
@@ -556,14 +572,35 @@
   fillSelect(editor.unit, CHOICES.length_units, "—");
   fillSelect(editor.status, CHOICES.statuses);
 
+  // NetBox bundles Bootstrap's offcanvas but does not expose window.bootstrap. Toggling the
+  // "show" class by hand left an editor that neither the close buttons nor Esc could close
+  // (Bootstrap's dismiss handler ignores an instance it did not open), so drive it through
+  // Bootstrap's data API with a hidden trigger. Only without Bootstrap at all fall back to the class.
+  const editorTrigger = el("button", { type: "button", hidden: true, "data-bs-toggle": "offcanvas", "data-bs-target": "#pm-editor" });
+  document.body.append(editorTrigger);
+  const editorIsOpen = () => editor.node.classList.contains("show") || editor.node.classList.contains("showing");
+
   function showOffcanvas(show) {
     const Off = window.bootstrap && window.bootstrap.Offcanvas;
     if (Off) {
       const inst = Off.getOrCreateInstance(editor.node);
       show ? inst.show() : inst.hide();
-    } else {
-      editor.node.classList.toggle("show", show);
+      return;
     }
+    if (show === editorIsOpen()) return;
+    if (show) {
+      editorTrigger.click();
+      editor.fallback = !editorIsOpen();
+      if (editor.fallback) editor.node.classList.add("show");
+    } else if (editor.fallback) {
+      editor.node.classList.remove("show");
+    } else {
+      editor.node.querySelector('[data-bs-dismiss="offcanvas"]').click();
+    }
+  }
+  // Fallback only: close buttons and Esc when Bootstrap is not on the page.
+  for (const b of editor.node.querySelectorAll('[data-bs-dismiss="offcanvas"]')) {
+    b.addEventListener("click", () => { if (editor.fallback) editor.node.classList.remove("show"); });
   }
 
   function openEditor(cab, fromPortId) {
@@ -600,6 +637,9 @@
     del.textContent = cab.kind === "pending" ? "Discard" : cab.deleted ? "Restore" : "Delete";
     del.className = `btn ${cab.deleted ? "btn-outline-success" : "btn-outline-danger"}`;
     del.hidden = !cfg.canEdit;
+    // A port whose cable is marked for deletion is free for this session: offer to reuse it.
+    const reuse = $("#pm-editor-reuse");
+    reuse.hidden = !cfg.canEdit || !cab.deleted || cableOf(fromPortId).kind === "pending";
     $("#pm-editor-apply").hidden = !cfg.canEdit || cab.deleted;
     for (const f of [editor.type, editor.length, editor.unit, editor.label, editor.status]) f.disabled = !cfg.canEdit || cab.deleted;
     showOffcanvas(true);
@@ -637,6 +677,10 @@
     if (cab.kind === "pending") {
       state.pending.create = state.pending.create.filter((c) => c.ref !== cab.ref);
     } else if (cab.deleted) {
+      // Restoring needs both ends back; a staged cable may have taken one of them meanwhile.
+      const ends = [editor.current.fromPortId, cab.peerPortId];
+      const taker = state.pending.create.find((c) => ends.includes(c.a) || ends.includes(c.b));
+      if (taker) return toast("A staged cable now uses one of its ports — discard that cable first", "warning");
       state.pending.delete.delete(cab.id);
     } else {
       state.pending.delete.add(cab.id);
@@ -648,6 +692,12 @@
 
   $("#pm-editor-apply").addEventListener("click", applyEditor);
   $("#pm-editor-delete").addEventListener("click", deleteFromEditor);
+  $("#pm-editor-reuse").addEventListener("click", () => {
+    const { fromPortId } = editor.current || {};
+    if (fromPortId == null) return;
+    showOffcanvas(false);
+    arm(fromPortId);
+  });
 
   // ----------------------------------------------------------- connections
 
@@ -685,7 +735,10 @@
         },
           el("td", {}, p.name),
           peerCell,
-          el("td", {}, [labelOf(CHOICES.cable_types, cab.type), fmtLen(cab.length, cab.length_unit), cab.label].filter(Boolean).join(" · ") || "—", flag),
+          (() => {
+            const text = [labelOf(CHOICES.cable_types, cab.type), fmtLen(cab.length, cab.length_unit), cab.label].filter(Boolean).join(" · ");
+            return el("td", { title: text || null }, flag, flag ? " " : null, text || "—");
+          })(),
         ),
       );
     }
@@ -710,22 +763,41 @@
       delete: [...state.pending.delete],
     };
     const btn = $("#pm-save");
+    const discardBtn = $("#pm-discard");
+    const label = btn.textContent;
     btn.disabled = true;
+    if (discardBtn) discardBtn.disabled = true;
+    btn.textContent = "Saving…";
+    let res;
     try {
-      const res = await api("commit/", payload);
-      toast(`Saved: ${res.created.length} created, ${res.updated} updated, ${res.deleted} deleted`, "success");
-      state.pending = { create: [], update: new Map(), delete: new Set() };
-      await reloadAll();
+      res = await api("commit/", payload);
     } catch (e) {
       const errors = (e.body && e.body.errors) || [{ error: e.message }];
       showErrors(errors);
-      btn.disabled = false;
+      btn.textContent = label;
+      renderPending();
+      return;
+    }
+    btn.textContent = label;
+    clearErrors();
+    toast(`Saved: ${res.created.length} created, ${res.updated} updated, ${res.deleted} deleted`, "success");
+    state.pending = { create: [], update: new Map(), delete: new Set() };
+    // The commit is done; a failure from here on must not read as "nothing was saved".
+    try {
+      await reloadAll();
+    } catch (e) {
+      toast(`Saved, but refreshing the bench failed (${e.message}). Reload the page.`, "warning");
+      rerender();
     }
   }
 
-  function showErrors(errors) {
+  function clearErrors() {
     const old = $("#pm-errors");
     if (old) old.remove();
+  }
+
+  function showErrors(errors) {
+    clearErrors();
     const box = el("div", { id: "pm-errors", class: "alert alert-danger alert-dismissible" },
       el("div", { class: "fw-bold mb-1" }, "Nothing was saved:"),
       el("ul", { class: "mb-0" }, errors.map((e) => el("li", {}, describeError(e)))),
@@ -742,41 +814,84 @@
         return `${a.card.device.name} ${a.port.name} ↔ ${b.card.device.name} ${b.port.name}: ${e.error}`;
       }
     }
+    if (e.op === "update" && e.id != null) {
+      for (const { port, card: c } of state.ports.values()) {
+        if (port.cable === e.id) return `Cable #${e.id} (${c.device.name} ${port.name}): ${e.error}`;
+      }
+    }
     return `${e.op ? e.op + " " : ""}${e.id ? "#" + e.id + " " : ""}${e.error}`;
   }
 
   function discard() {
     state.pending = { create: [], update: new Map(), delete: new Set() };
+    clearErrors();
     disarm();
     rerender();
   }
 
   // ---------------------------------------------------------------- spokes
 
-  async function addSpoke(deviceId, expanded) {
-    if (state.cards.has(deviceId)) {
-      const c = card(deviceId);
-      if (!c.isHub && !c.expanded) toggleSpoke(c);
-      return c;
+  /** Run fn over items with at most `limit` in flight; results keep the input order. */
+  async function mapLimit(items, limit, fn) {
+    const out = new Array(items.length);
+    let next = 0;
+    const worker = async () => {
+      while (next < items.length) {
+        const i = next++;
+        out[i] = await fn(items[i], i);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return out;
+  }
+
+  const LOAD_CONCURRENCY = 6;
+
+  /**
+   * Put devices on the bench as spokes, in the given order. Loading happens in parallel and
+   * the bench is rendered once at the end: one request and one full re-render per spoke made a
+   * hub with forty peers take seconds to appear.
+   */
+  async function addSpokes(deviceIds, expandedOf) {
+    const fresh = [];
+    for (const id of deviceIds) {
+      if (state.cards.has(id)) {
+        const c = card(id);
+        if (!c.isHub && !c.busy && !c.expanded && expandedOf(id)) c.expanded = true;
+        continue;
+      }
+      const placeholder = { device: { id }, ports: [], busy: true, isHub: false, expanded: false, el: el("div", { class: "card pm-spoke" }) };
+      state.cards.set(id, placeholder);
+      fresh.push(placeholder);
     }
-    const placeholder = { device: { id: deviceId }, ports: [], busy: true, isHub: false, expanded: false, el: el("div", { class: "card pm-spoke" }) };
-    state.cards.set(deviceId, placeholder);
-    try {
-      const c = await loadCard(deviceId, false);
-      c.expanded = expanded;
-      c.el = placeholder.el;
-      state.cards.set(deviceId, c);
+    const status = $("#pm-spoke-count");
+    if (fresh.length > 1 && status) status.textContent = `loading ${fresh.length} devices…`;
+    const loaded = await mapLimit(fresh, LOAD_CONCURRENCY, (ph) =>
+      loadCard(ph.device.id, false).catch((e) => ({ error: e, id: ph.device.id })));
+    const failed = [];
+    for (const [i, c] of loaded.entries()) {
+      const ph = fresh[i];
+      if (c.error) {
+        state.cards.delete(ph.device.id);
+        failed.push(`${ph.device.id} (${c.error.message})`);
+        continue;
+      }
+      c.expanded = expandedOf(ph.device.id);
+      c.el = ph.el;
+      state.cards.set(c.device.id, c);
       state.spokes.push(c);
       registerPorts(c);
       $("#pm-spokes").append(c.el);
-      if (state.focus == null) state.focus = deviceId; // the first spoke starts focused
-      rerender();
-      return c;
-    } catch (e) {
-      state.cards.delete(deviceId);
-      toast(`Could not load device ${deviceId}: ${e.message}`, "danger");
-      return null;
     }
+    if (failed.length) toast(`Could not load ${failed.length > 1 ? "devices" : "device"} ${failed.join(", ")}`, "danger");
+    if (state.focus == null && state.spokes.length) state.focus = state.spokes[0].device.id; // the first spoke starts focused
+    rerender();
+    if (state.armed != null) arm(state.armed); // new ports to check against
+  }
+
+  async function addSpoke(deviceId, expanded) {
+    await addSpokes([deviceId], () => expanded);
+    return card(deviceId) || null;
   }
 
   function removeSpoke(c) {
@@ -844,13 +959,42 @@
 
   $("#pm-shelf-add").addEventListener("click", async () => {
     const ids = [...document.querySelectorAll("#pm-shelf-list input:checked")].map((i) => Number(i.value));
-    for (const id of ids) await addSpoke(id, true);
+    await addSpokes(ids, () => true);
   });
 
   // --------------------------------------------------------------- render
 
+  const filterBox = $("#pm-filter");
+
+  function matchesFilter(c) {
+    const q = (filterBox ? filterBox.value : "").trim().toLowerCase();
+    if (!q) return true;
+    const d = c.device;
+    return [d.name, d.device_type, d.rack, d.role].some((v) => v && String(v).toLowerCase().includes(q));
+  }
+
+  function renderSpokeCount() {
+    const node = $("#pm-spoke-count");
+    if (!node) return;
+    const ready = state.spokes.length;
+    const shown = state.spokes.filter((s) => !s.filteredOut).length;
+    node.textContent = !ready ? "" : shown === ready ? `${ready} spokes` : `${shown} of ${ready} spokes`;
+  }
+
+  function setAllExpanded(expanded) {
+    for (const s of state.spokes) if (!s.filteredOut) s.expanded = expanded;
+    if (state.armed != null) disarm();
+    rerender();
+  }
+
   function rerender() {
-    for (const c of state.cards.values()) if (c.el && !c.busy) renderCard(c);
+    for (const c of state.cards.values()) {
+      if (!c.el || c.busy) continue;
+      c.filteredOut = !c.isHub && !matchesFilter(c);
+      c.el.hidden = c.filteredOut;
+      renderCard(c);
+    }
+    renderSpokeCount();
     refreshTiles();
     renderConnections();
     renderPending();
@@ -866,9 +1010,10 @@
     state.hub = hub;
     state.cards.set(hub.device.id, hub);
     registerPorts(hub);
+    const fresh = await mapLimit(state.spokes, LOAD_CONCURRENCY, (s) => loadCard(s.device.id, false));
     const spokes = [];
-    for (const s of state.spokes) {
-      const c = await loadCard(s.device.id, false);
+    for (const [i, s] of state.spokes.entries()) {
+      const c = fresh[i];
       c.el = s.el;
       c.expanded = expanded.get(s.device.id);
       unregisterPorts(s);
@@ -881,23 +1026,33 @@
   }
 
   async function init() {
-    const hub = await loadCard(cfg.hubId, true);
+    const [hub, { peers }] = await Promise.all([loadCard(cfg.hubId, true), api(`devices/${cfg.hubId}/peers/`)]);
     hub.el = $("#pm-hub");
     state.hub = hub;
     state.cards.set(hub.device.id, hub);
     registerPorts(hub);
     rerender();
-    const { peers } = await api(`devices/${cfg.hubId}/peers/`);
-    for (const [i, p] of peers.entries()) await addSpoke(p.id, i < EXPAND_DEFAULT);
     if (cfg.rackId) loadShelf(cfg.rackId);
+    const open = new Set(peers.slice(0, EXPAND_DEFAULT).map((p) => p.id));
+    await addSpokes(peers.map((p) => p.id), (id) => open.has(id));
   }
 
   // ---------------------------------------------------------------- wiring
 
   $("#pm-save")?.addEventListener("click", save);
+  if (filterBox) {
+    filterBox.addEventListener("input", () => {
+      rerender();
+      if (state.armed != null) arm(state.armed); // re-check against the spokes now visible
+    });
+  }
+  $("#pm-expand-all")?.addEventListener("click", () => setAllExpanded(true));
+  $("#pm-collapse-all")?.addEventListener("click", () => setAllExpanded(false));
   $("#pm-discard")?.addEventListener("click", discard);
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && state.armed != null) disarm();
+    if (e.key !== "Escape") return;
+    if (editor.fallback && editorIsOpen()) showOffcanvas(false);
+    else if (state.armed != null) disarm();
   });
   window.addEventListener("resize", scheduleLines);
   window.addEventListener("scroll", scheduleLines, { passive: true });

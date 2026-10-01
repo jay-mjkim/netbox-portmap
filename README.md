@@ -30,6 +30,7 @@ knows (interface names and types), so it works for any device type on day one.
 - Staged changes (create / edit / delete) are applied with one request,
   all-or-nothing, re-validated on the server.
 - Connection list for the hub with row ↔ line highlighting.
+- Spoke filter (name, type, rack, role) and expand/collapse all, for hubs with dozens of peers.
 - A **Port Map** tab on every device page.
 - No dependency on other plugins.
 
@@ -37,7 +38,7 @@ knows (interface names and types), so it works for any device type on day one.
 
 | netbox-portmap | NetBox |
 |----------------|--------|
-| 0.1.x          | 4.5 – 4.6 |
+| 0.1.x – 0.2.x  | 4.5 – 4.6 |
 
 ## Installation
 
@@ -82,7 +83,8 @@ PLUGINS_CONFIG = {
         "cable_type_defaults": {"copper": "cat6a", "sfp": "mmf-om4", "qsfp": "aoc", "stack": ""},  # NetBox cable types; "" = unset
         # Length suggestion from rack positions: |rack index difference| * rack_pitch + vertical,
         # rounded up to the next entry of "sizes". The rack index is the trailing number of the
-        # rack name ("A-07" -> 7). Set to None to disable.
+        # rack name ("A-07" -> 7) and the rest of the name is the row ("A-"): racks in different
+        # rows or locations get no suggestion. Set to None to disable.
         "length_model": {
             "unit": "m",
             "rack_pitch": 0.6,

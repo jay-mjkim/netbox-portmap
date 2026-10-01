@@ -31,6 +31,17 @@
                 {{ hub.site }}{% if hub.rack %} &middot; {{ hub.rack }}{% endif %}
             </span>
             <span id="pm-armed" class="badge bg-warning-lt text-warning" hidden></span>
+            <span class="d-flex align-items-center gap-1 ms-2">
+                <input type="search" class="form-control form-control-sm pm-filter" id="pm-filter"
+                       placeholder="{% trans 'Filter spokes' %}" aria-label="{% trans 'Filter spokes by name, type or rack' %}">
+                <button type="button" class="btn btn-sm btn-ghost-secondary" id="pm-expand-all" title="{% trans 'Expand all spokes' %}">
+                    <i class="mdi mdi-unfold-more-horizontal" aria-hidden="true"></i><span class="visually-hidden">{% trans "Expand all" %}</span>
+                </button>
+                <button type="button" class="btn btn-sm btn-ghost-secondary" id="pm-collapse-all" title="{% trans 'Collapse all spokes' %}">
+                    <i class="mdi mdi-unfold-less-horizontal" aria-hidden="true"></i><span class="visually-hidden">{% trans "Collapse all" %}</span>
+                </button>
+                <span class="text-muted small" id="pm-spoke-count"></span>
+            </span>
             <span class="ms-auto d-flex align-items-center gap-2">
                 <span id="pm-pending" class="badge bg-blue-lt" title="{% trans 'Changes not yet saved' %}">{% trans "Pending" %} 0</span>
                 {% if can_edit %}
@@ -122,6 +133,8 @@
             </div>
             <div class="offcanvas-footer p-3 border-top d-flex gap-2">
                 <button type="button" class="btn btn-outline-danger" id="pm-editor-delete">{% trans "Delete" %}</button>
+                <button type="button" class="btn btn-outline-primary" id="pm-editor-reuse" hidden
+                        title="{% trans 'This cable is marked for deletion; connect the port to something else in the same save' %}">{% trans "Connect elsewhere" %}</button>
                 <button type="button" class="btn btn-secondary ms-auto" data-bs-dismiss="offcanvas">{% trans "Close" %}</button>
                 <button type="button" class="btn btn-primary" id="pm-editor-apply">{% trans "Apply" %}</button>
             </div>
@@ -137,7 +150,7 @@
                 api: "{% url 'plugins-api:netbox_portmap-api:api-root' %}",
                 csrf: "{{ csrf_token }}",
                 canEdit: {{ can_edit|yesno:"true,false" }},
-                rackId: "{{ request.GET.rack|default:'' }}",
+                rackId: "{{ request.GET.rack|default:''|escapejs }}",
             };
         </script>
         <script src="{% static_v 'netbox_portmap/js/workbench.js' %}" defer></script>
