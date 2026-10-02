@@ -72,6 +72,20 @@
 
   const fmtLen = (len, unit) => (len == null || len === "" ? "" : `${Number(len)} ${unit || ""}`.trim());
 
+  // Cisco-style abbreviations keep peer names short in chips, tooltips and the inspector.
+  const IF_ABBR = [
+    [/^HundredGigE/i, "Hu"], [/^FortyGigabitEthernet/i, "Fo"], [/^TwentyFiveGigE/i, "Twe"],
+    [/^TenGigabitEthernet/i, "Te"], [/^GigabitEthernet/i, "Gi"], [/^FastEthernet/i, "Fa"],
+  ];
+  const shortIf = (name) => {
+    for (const [re, abbr] of IF_ABBR) if (re.test(name || "")) return name.replace(re, abbr);
+    return name || "";
+  };
+  const statusLabel = (value) => labelOf(CHOICES.statuses, value) || value || "";
+  // Type and length. The label is left out: labels often repeat both ends verbatim and drowned
+  // everything else; the inspector shows it on its own line.
+  const cableText = (cab) => [labelOf(CHOICES.cable_types, cab.type), fmtLen(cab.length, cab.length_unit)].filter(Boolean).join(" · ");
+
   function shortLabel(p) {
     const m = /^(.*?)(\d+)$/.exec(p.name);
     if (m && m[1]) return m[2];
@@ -89,7 +103,8 @@
     armed: null, // interface id
     compat: new Map(), // interface id -> verdict, while armed
     focus: null, // device id of the spoke sitting right under the hub; only its cables get lines
-    hoverKey: null, // link key under the pointer, drawn even when not in focus
+    hoverKey: null, // link key under the pointer: its line is drawn thicker
+    selected: null, // interface id whose connection is being inspected
     seq: 0,
   };
 
@@ -143,7 +158,6 @@
 
   /** A card whose ports are drawn: the hub, or an expanded spoke not hidden by the filter. */
   const showsPorts = (c) => !!c && (c.isHub || (c.expanded && !c.filteredOut));
-  const onScreen = (deviceId) => showsPorts(card(deviceId));
 
   const pendingCount = () => state.pending.create.length + state.pending.update.size + state.pending.delete.size;
 
@@ -255,11 +269,14 @@
           {
             type: "button",
             class: "pm-port",
-            dataset: { id: p.id, family: p.family },
+            dataset: { id: p.id, family: p.family, name: p.name },
             style: `left:${p.col * PITCH}px; top:${p.row * PITCH}px`,
             onclick: () => onPortClick(p.id),
-            onmouseenter: () => highlight(p.id, true),
-            onmouseleave: () => highlight(p.id, false),
+            ondblclick: () => { const cab = cableOf(p.id); if (cab && state.armed == null) openEditor(cab, p.id); },
+            onmouseenter: (e) => { highlight(p.id, true); showTip(e.currentTarget); },
+            onmouseleave: () => { highlight(p.id, false); hideTip(); },
+            onfocus: (e) => showTip(e.currentTarget),
+            onblur: hideTip,
           },
           shortLabel(p),
         ),
@@ -281,14 +298,21 @@
         const cab = cableOf(p.id);
         if (!cab || cab.deleted || cab.peerDeviceId !== c.device.id) continue;
         chips.append(
-          el("span", { class: `pm-chip${cab.kind === "pending" ? " text-primary" : ""}` },
-            el("b", {}, cab.peerName), "↔", `${other.device.name} ${p.name}`),
+          el("button", {
+            type: "button",
+            class: `pm-chip${cab.kind === "pending" ? " text-primary" : ""}${state.selected === p.id || state.selected === cab.peerPortId ? " sel" : ""}`,
+            title: `${c.device.name} ${cab.peerName} ↔ ${other.device.name} ${p.name}`,
+            onclick: () => select(p.id),
+          },
+          el("b", {}, shortIf(cab.peerName)), " ↔ ", other.isHub ? shortIf(p.name) : `${other.device.name} ${shortIf(p.name)}`),
         );
       }
     }
     if (!chips.children.length) chips.append(el("span", { class: "text-muted small" }, "No cables to devices on the bench"));
     return chips;
   }
+
+  const TILE_STATES = ["st-connected", "st-planned", "st-decommissioning", "pend", "del", "armed", "dim", "ok", "sel"];
 
   function refreshTiles() {
     const armed = state.armed;
@@ -297,19 +321,23 @@
       const tile = c.el.querySelector(`.pm-port[data-id="${id}"]`);
       if (!tile) continue;
       const cab = cableOf(id);
-      tile.classList.remove("on", "far", "pend", "del", "armed", "dim", "ok");
+      tile.classList.remove(...TILE_STATES);
+      // Tooltip lines: the port, where it goes, what the cable is.
       let title = `${port.name} · ${port.form_factor}${port.mgmt_only ? " · mgmt" : ""}`;
-      if (cab && cab.kind === "pending") {
-        tile.classList.add("pend");
-        title += `\n→ ${cab.peerDevice} ${cab.peerName} (pending${cab.type ? ", " + labelOf(CHOICES.cable_types, cab.type) : ""})`;
-      } else if (cab && cab.deleted) {
-        tile.classList.add("del");
-        title += `\n→ ${cab.peerDevice} ${cab.peerName} · cable #${cab.id} marked for deletion`;
-      } else if (cab) {
-        tile.classList.add(onScreen(cab.peerDeviceId) ? "on" : "far");
-        title += `\n→ ${cab.peerDevice} ${cab.peerName} · cable #${cab.id}`;
-        const detail = [labelOf(CHOICES.cable_types, cab.type), fmtLen(cab.length, cab.length_unit), cab.label].filter(Boolean).join(", ");
-        if (detail) title += ` (${detail})`;
+      if (cab) {
+        title += `\n→ ${cab.peerDevice} ${cab.peerName}`;
+        const detail = cableText(cab);
+        if (cab.kind === "pending") {
+          tile.classList.add("pend");
+          title += `\nnew${detail ? " · " + detail : ""} — not saved`;
+        } else if (cab.deleted) {
+          tile.classList.add("del");
+          title += `\ncable #${cab.id} — marked for deletion`;
+        } else {
+          tile.classList.add(`st-${cab.status || "connected"}`);
+          title += `\n${[detail, statusLabel(cab.status), `#${cab.id}`].filter(Boolean).join(" · ")}`;
+        }
+        if (state.selected != null && (id === state.selected || id === cableOf(state.selected)?.peerPortId)) tile.classList.add("sel");
       }
       if (armed != null) {
         if (id === armed) tile.classList.add("armed");
@@ -324,7 +352,9 @@
           }
         }
       }
-      tile.title = title;
+      tile.dataset.tip = title;
+      tile.setAttribute("aria-label", title.replace(/\n/g, ", "));
+      tile.removeAttribute("title");
     }
     for (const c of state.cards.values()) {
       const badge = c.el.querySelector(`[data-compat="${c.device.id}"]`);
@@ -377,13 +407,15 @@
   }
 
   /** Cables to draw: hub <-> focused spoke (adjacent cards, so lines cross nothing), staged ones,
-   *  and the one under the pointer. Everything else is visible as tile state and in the list. */
+   *  and the selected one. Hovering never adds a line: a hover line to a spoke further down cut
+   *  across every card in between. Selecting a hub cable brings its spoke under the hub instead. */
   function visibleLinks() {
     const links = new Map();
     const hubId = state.hub ? state.hub.device.id : null;
     const focusId = state.focus;
+    const selKey = state.selected == null ? null : linkKeyOf(state.selected);
     const wanted = (aId, bId, key) => {
-      if (key === state.hoverKey) return true;
+      if (key === selKey) return true;
       const da = state.ports.get(aId).card.device.id;
       const db = state.ports.get(bId).card.device.id;
       return (da === hubId && db === focusId) || (da === focusId && db === hubId);
@@ -410,7 +442,7 @@
       const a = tileAnchor(link.a, benchRect);
       const b = tileAnchor(link.b, benchRect);
       if (!a || !b) continue;
-      const hi = link.key === state.hoverKey;
+      const hi = link.key === state.hoverKey || (state.selected != null && link.key === linkKeyOf(state.selected));
       const cls = `pm-line${link.pending ? " pend" : ""}${hi ? " hi" : ""}`;
       const colour = colours.getPropertyValue(`--pm-${a.family}`).trim() || colours.getPropertyValue("--pm-other").trim();
       const [top, bot] = a.cy <= b.cy ? [a, b] : [b, a];
@@ -458,9 +490,153 @@
     if (!c || c.isHub) return;
     state.focus = c.device.id;
     if (!c.expanded) c.expanded = true;
-    state.spokes = [c, ...state.spokes.filter((s) => s !== c)];
-    $("#pm-spokes").prepend(c.el);
+    orderSpokes();
     rerender();
+  }
+
+  /** Hub ports in reading order (the order of the connection list and of ← →). */
+  const hubPortOrder = () => (state.hub ? [...state.hub.ports].sort((x, y) => x.col - y.col || x.row - y.row) : []);
+
+  /**
+   * Spokes follow the hub's port order (the device on hub port 1 first), with the focused spoke
+   * on top. Walking the hub's ports then walks down the bench instead of jumping around it.
+   */
+  function orderSpokes() {
+    const rank = new Map();
+    hubPortOrder().forEach((p, i) => {
+      const cab = cableOf(p.id);
+      if (cab && cab.peerDeviceId != null && !rank.has(cab.peerDeviceId)) rank.set(cab.peerDeviceId, i);
+    });
+    const key = (s) => (s.device.id === state.focus ? -1 : rank.has(s.device.id) ? rank.get(s.device.id) : 1e6);
+    state.spokes.sort((a, b) => key(a) - key(b) || a.device.name.localeCompare(b.device.name));
+    const host = $("#pm-spokes");
+    for (const s of state.spokes) host.append(s.el);
+  }
+
+  // ------------------------------------------------------------ inspection
+
+  const tip = el("div", { class: "pm-tip", role: "tooltip", hidden: true });
+  document.body.append(tip);
+
+  /** Immediate tooltip: the browser's title tooltip took a second and could not be styled. */
+  function showTip(node) {
+    const text = node.dataset.tip;
+    if (!text) return;
+    tip.replaceChildren(...text.split("\n").map((line, i) => el("div", { class: i === 0 ? "pm-tip-head" : null }, line)));
+    tip.hidden = false;
+    const r = node.getBoundingClientRect();
+    const w = tip.offsetWidth;
+    const left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), window.innerWidth - w - 8);
+    // Above the port when there is room: below it, the tip covered the spoke right under the hub.
+    const above = r.top - tip.offsetHeight - 8 > 0;
+    tip.style.left = `${left + window.scrollX}px`;
+    tip.style.top = `${(above ? r.top - tip.offsetHeight - 8 : r.bottom + 8) + window.scrollY}px`;
+  }
+  const hideTip = () => { tip.hidden = true; };
+
+  /**
+   * Inspect a connection: both ends are marked, a hub <-> spoke cable brings the spoke right under
+   * the hub (so its line is short and both ends are on screen), and the inspector shows the cable.
+   */
+  function select(portId) {
+    hideTip();
+    const cab = portId == null ? null : cableOf(portId);
+    if (!cab) return deselect();
+    state.selected = portId;
+    const me = state.ports.get(portId).card;
+    const peer = cab.peerDeviceId != null ? card(cab.peerDeviceId) : null;
+    let spoke = null;
+    if (me.isHub && peer && !peer.busy) spoke = peer;
+    else if (peer && peer.isHub) spoke = me;
+    if (spoke && spoke.filteredOut) {
+      filterBox.value = "";
+    }
+    if (spoke) setFocus(spoke);
+    else rerender();
+    if (spoke) revealUnderHub(spoke);
+    const row = $(`#pm-connections tr[data-port="${me.isHub ? portId : cab.peerPortId}"]`);
+    if (row) row.scrollIntoView({ block: "nearest" });
+  }
+
+  function deselect() {
+    if (state.selected == null) return;
+    state.selected = null;
+    rerender();
+  }
+
+  /** Scroll so the focused spoke sits fully visible below the (sticky) hub. */
+  function revealUnderHub(spoke) {
+    requestAnimationFrame(() => {
+      const hubBottom = Math.max(0, state.hub.el.getBoundingClientRect().bottom);
+      const r = spoke.el.getBoundingClientRect();
+      if (r.top < hubBottom + 4 || r.bottom > window.innerHeight) {
+        window.scrollBy({ top: r.top - hubBottom - 40, behavior: "smooth" });
+      }
+    });
+  }
+
+  /** ← / →: step through the hub's cables in port order. */
+  function step(delta) {
+    const order = hubPortOrder().filter((p) => cableOf(p.id));
+    if (!order.length) return;
+    let from = -1;
+    if (state.selected != null) {
+      const entry = state.ports.get(state.selected);
+      const hubPort = entry && entry.card.isHub ? state.selected : cableOf(state.selected)?.peerPortId;
+      from = order.findIndex((p) => p.id === hubPort);
+    }
+    const next = from < 0 ? (delta > 0 ? 0 : order.length - 1) : (from + delta + order.length) % order.length;
+    select(order[next].id);
+  }
+
+  function renderInspector() {
+    const body = $("#pm-inspector-body");
+    if (!body) return;
+    const cab = state.selected == null ? null : cableOf(state.selected);
+    const count = $("#pm-inspector-pos");
+    const order = hubPortOrder().filter((p) => cableOf(p.id));
+    if (!cab) {
+      body.replaceChildren(el("div", { class: "text-muted small" },
+        "Click a cabled port, a chip or a row of the list to inspect its connection. ",
+        el("kbd", {}, "←"), " ", el("kbd", {}, "→"), " step through the hub's cables, ",
+        el("kbd", {}, "Esc"), " clears. Double-click a port to edit its cable."));
+      if (count) count.textContent = order.length ? `${order.length} cables on the hub` : "";
+      return;
+    }
+    const me = state.ports.get(state.selected);
+    // Show the hub end first when the hub is one of the ends.
+    let a = { device: me.card.device, port: me.port, portId: state.selected };
+    let b = cab.peerPortId != null && state.ports.get(cab.peerPortId)
+      ? { device: state.ports.get(cab.peerPortId).card.device, port: state.ports.get(cab.peerPortId).port, portId: cab.peerPortId }
+      : { device: { name: cab.peerDevice, id: cab.peerDeviceId }, port: { name: cab.peerName } };
+    if (!me.card.isHub && b.device.id === (state.hub && state.hub.device.id)) [a, b] = [b, a];
+    const end = (x) => el("div", { class: "pm-end" },
+      el("div", {}, el("b", {}, x.device.name), " ", el("span", { class: "pm-end-port" }, shortIf(x.port.name))),
+      el("div", { class: "text-muted small" },
+        [x.port.form_factor, x.device.rack, x.device.position != null ? `U${x.device.position}` : null].filter(Boolean).join(" · ")));
+    const status = cab.kind === "pending" ? "new — not saved" : cab.deleted ? "marked for deletion" : statusLabel(cab.status);
+    const statusClass = cab.kind === "pending" ? "pend" : cab.deleted ? "del" : `st-${cab.status || "connected"}`;
+    const actions = el("div", { class: "d-flex gap-2 mt-3" },
+      el("button", { type: "button", class: "btn btn-sm btn-primary", onclick: () => openEditor(cab, state.selected) }, cfg.canEdit ? "Edit" : "Details"),
+      cab.kind === "existing" ? el("a", { class: "btn btn-sm btn-outline-secondary", href: `/dcim/cables/${cab.id}/` }, `Cable #${cab.id}`) : null,
+      cab.peerDeviceId != null && !state.cards.has(cab.peerDeviceId)
+        ? el("button", { type: "button", class: "btn btn-sm btn-outline-primary", onclick: async () => { await addSpoke(cab.peerDeviceId, true); select(state.selected); } }, "Add peer to bench")
+        : null,
+    );
+    body.replaceChildren(
+      end(a),
+      el("div", { class: "pm-link" },
+        el("span", { class: `pm-status ${statusClass}` }, status),
+        el("span", {}, cableText(cab) || "no type / length"),
+        cab.label ? el("span", { class: "text-muted small pm-label", title: cab.label }, cab.label) : null),
+      end(b),
+      actions,
+    );
+    if (count) {
+      const hubPort = a.portId != null && state.ports.get(a.portId)?.card.isHub ? a.portId : null;
+      const i = order.findIndex((p) => p.id === hubPort);
+      count.textContent = i >= 0 ? `${i + 1} / ${order.length} on the hub` : "";
+    }
   }
 
   // --------------------------------------------------------------- arming
@@ -505,8 +681,11 @@
     const { card: c } = state.ports.get(portId);
     const cab = cableOf(portId);
     if (state.armed == null) {
-      if (cab) openEditor(cab, portId);
-      else if (cfg.canEdit) arm(portId);
+      if (cab) return state.selected === portId ? deselect() : select(portId);
+      if (cfg.canEdit) {
+        state.selected = null;
+        arm(portId);
+      }
       return;
     }
     if (portId === state.armed) return disarm();
@@ -514,7 +693,7 @@
       // Another port on the same device: switch to it if it is free, otherwise show its cable.
       if (cab && !cab.deleted) {
         disarm();
-        return openEditor(cab, portId);
+        return select(portId);
       }
       return arm(portId);
     }
@@ -706,39 +885,37 @@
     tbody.replaceChildren();
     if (!state.hub) return;
     const rows = [];
-    for (const p of [...state.hub.ports].sort((x, y) => x.col - y.col || x.row - y.row)) {
+    for (const p of hubPortOrder()) {
       const cab = cableOf(p.id);
-      if (!cab) continue;
-      rows.push([p, cab]);
+      if (cab) rows.push([p, cab]);
     }
     if (!rows.length) {
       tbody.append(el("tr", {}, el("td", { colspan: 3, class: "text-muted" }, "No cables on the hub yet")));
       return;
     }
+    const selHubPort = state.selected == null ? null
+      : state.ports.get(state.selected)?.card.isHub ? state.selected : cableOf(state.selected)?.peerPortId;
     for (const [p, cab] of rows) {
       const key = cab.kind === "pending" ? `p${cab.ref}` : `c${cab.id}`;
-      const flag =
-        cab.kind === "pending" ? el("span", { class: "badge bg-blue-lt ms-1" }, "new")
-          : cab.deleted ? el("span", { class: "badge bg-red-lt ms-1" }, "delete")
-            : cab.edited ? el("span", { class: "badge bg-yellow-lt ms-1" }, "edited") : null;
-      const peerCell = el("td", {}, el("b", {}, cab.peerDevice), " ", cab.peerName);
+      const statusClass = cab.kind === "pending" ? "pend" : cab.deleted ? "del" : `st-${cab.status || "connected"}`;
+      const statusText = cab.kind === "pending" ? "new" : cab.deleted ? "delete" : statusLabel(cab.status);
+      const peerCell = el("td", {}, el("b", {}, cab.peerDevice), " ", shortIf(cab.peerName));
       if (cab.peerDeviceId != null && !state.cards.has(cab.peerDeviceId)) {
         peerCell.append(" ", el("a", { href: "#", class: "small", onclick: (e) => { e.preventDefault(); e.stopPropagation(); addSpoke(cab.peerDeviceId, true); } }, "+ bench"));
       }
+      const text = cableText(cab);
       tbody.append(
         el("tr", {
-          dataset: { key },
-          class: cab.deleted ? "text-muted text-decoration-line-through" : "",
-          onclick: () => openEditor(cab, p.id),
+          dataset: { key, port: p.id },
+          class: [cab.deleted ? "text-muted text-decoration-line-through" : "", p.id === selHubPort ? "table-active pm-row-sel" : ""].join(" ").trim(),
+          onclick: () => select(p.id),
+          ondblclick: () => openEditor(cab, p.id),
           onmouseenter: () => highlight(p.id, true),
           onmouseleave: () => highlight(p.id, false),
         },
-          el("td", {}, p.name),
+          el("td", {}, el("i", { class: `pm-dot-status ${statusClass}`, title: statusText }), shortIf(p.name)),
           peerCell,
-          (() => {
-            const text = [labelOf(CHOICES.cable_types, cab.type), fmtLen(cab.length, cab.length_unit), cab.label].filter(Boolean).join(" · ");
-            return el("td", { title: text || null }, flag, flag ? " " : null, text || "—");
-          })(),
+          el("td", { title: [text, statusText, cab.label].filter(Boolean).join(" · ") }, text || "—"),
         ),
       );
     }
@@ -884,7 +1061,11 @@
       $("#pm-spokes").append(c.el);
     }
     if (failed.length) toast(`Could not load ${failed.length > 1 ? "devices" : "device"} ${failed.join(", ")}`, "danger");
-    if (state.focus == null && state.spokes.length) state.focus = state.spokes[0].device.id; // the first spoke starts focused
+    orderSpokes();
+    if (state.focus == null && state.spokes.length) {
+      state.focus = state.spokes[0].device.id; // the first spoke starts focused
+      orderSpokes();
+    }
     rerender();
     if (state.armed != null) arm(state.armed); // new ports to check against
   }
@@ -899,6 +1080,7 @@
       return toast("Discard or save its pending cables first", "warning");
     }
     unregisterPorts(c);
+    if (state.selected != null && !state.ports.has(state.selected)) state.selected = null;
     state.cards.delete(c.device.id);
     state.spokes = state.spokes.filter((s) => s !== c);
     c.el.remove();
@@ -996,6 +1178,7 @@
     }
     renderSpokeCount();
     refreshTiles();
+    renderInspector();
     renderConnections();
     renderPending();
     renderShelf();
@@ -1022,6 +1205,8 @@
       spokes.push(c);
     }
     state.spokes = spokes;
+    if (state.selected != null && !state.ports.has(state.selected)) state.selected = null;
+    orderSpokes();
     rerender();
   }
 
@@ -1046,13 +1231,22 @@
       if (state.armed != null) arm(state.armed); // re-check against the spokes now visible
     });
   }
+  $("#pm-prev")?.addEventListener("click", () => step(-1));
+  $("#pm-next")?.addEventListener("click", () => step(1));
   $("#pm-expand-all")?.addEventListener("click", () => setAllExpanded(true));
   $("#pm-collapse-all")?.addEventListener("click", () => setAllExpanded(false));
   $("#pm-discard")?.addEventListener("click", discard);
   document.addEventListener("keydown", (e) => {
+    const typing = e.target.closest && e.target.closest("input, select, textarea, [contenteditable]");
+    if (!typing && !editorIsOpen() && (e.key === "ArrowRight" || e.key === "ArrowLeft") && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      step(e.key === "ArrowRight" ? 1 : -1);
+      return;
+    }
     if (e.key !== "Escape") return;
     if (editor.fallback && editorIsOpen()) showOffcanvas(false);
     else if (state.armed != null) disarm();
+    else if (!editorIsOpen() && state.selected != null) deselect();
   });
   window.addEventListener("resize", scheduleLines);
   window.addEventListener("scroll", scheduleLines, { passive: true });

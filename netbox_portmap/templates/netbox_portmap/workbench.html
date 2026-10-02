@@ -61,7 +61,32 @@
                 </div>
             </div>
             <div class="col-12 col-xl-3">
-                <div class="card" id="pm-shelf">
+                <div class="pm-side">
+                <div class="card pm-inspector mb-3" id="pm-inspector" aria-live="polite">
+                    <div class="card-header d-flex align-items-center gap-2">
+                        <h5 class="mb-0">{% trans "Connection" %}</h5>
+                        <span class="text-muted small" id="pm-inspector-pos"></span>
+                        <span class="ms-auto btn-group btn-group-sm" role="group">
+                            <button type="button" class="btn btn-outline-secondary" id="pm-prev" title="{% trans 'Previous cable on the hub (←)' %}">
+                                <i class="mdi mdi-chevron-left" aria-hidden="true"></i><span class="visually-hidden">{% trans "Previous" %}</span>
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" id="pm-next" title="{% trans 'Next cable on the hub (→)' %}">
+                                <i class="mdi mdi-chevron-right" aria-hidden="true"></i><span class="visually-hidden">{% trans "Next" %}</span>
+                            </button>
+                        </span>
+                    </div>
+                    <div class="card-body" id="pm-inspector-body"></div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h5 class="mb-0">{% trans "Connections" %}</h5></div>
+                    <div class="table-responsive pm-connections-wrap">
+                        <table class="table table-sm table-hover mb-0 pm-connections" id="pm-connections">
+                            <thead><tr><th>{% trans "Port" %}</th><th>{% trans "Peer" %}</th><th>{% trans "Cable" %}</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="card mt-3" id="pm-shelf">
                     <div class="card-header d-flex align-items-center">
                         <h5 class="mb-0">{% trans "Shelf" %}</h5>
                         <span class="text-muted small ms-2" id="pm-shelf-rack"></span>
@@ -73,27 +98,19 @@
                         <button type="button" class="btn btn-sm btn-outline-primary flex-grow-1" id="pm-shelf-add" disabled>{% trans "Add selected as spokes" %}</button>
                     </div>
                 </div>
-                <div class="card mt-3">
-                    <div class="card-header"><h5 class="mb-0">{% trans "Connections" %}</h5></div>
-                    <div class="table-responsive">
-                        <table class="table table-sm table-hover mb-0 pm-connections" id="pm-connections">
-                            <thead><tr><th>{% trans "Port" %}</th><th>{% trans "Peer" %}</th><th>{% trans "Cable" %}</th></tr></thead>
-                            <tbody></tbody>
-                        </table>
-                    </div>
-                </div>
                 <div class="text-muted small mt-2 pm-legend">
-                    <span><i class="pm-sw pm-sw-on"></i>{% trans "cabled, peer on screen" %}</span>
-                    <span><i class="pm-sw pm-sw-far"></i>{% trans "cabled, peer not on screen" %}</span>
-                    <span><i class="pm-sw pm-sw-free"></i>{% trans "free" %}</span>
-                    <span><i class="pm-sw pm-sw-pend"></i>{% trans "pending" %}</span>
+                    <span><i class="pm-sw st-connected"></i>{% trans "connected" %}</span>
+                    <span><i class="pm-sw st-planned"></i>{% trans "planned" %}</span>
+                    <span><i class="pm-sw st-decommissioning"></i>{% trans "decommissioning" %}</span>
+                    <span><i class="pm-sw pend"></i>{% trans "new, not saved" %}</span>
+                    <span><i class="pm-sw del"></i>{% trans "to delete" %}</span>
+                    <span><i class="pm-sw"></i>{% trans "free" %}</span>
                     <br>
                     <span><i class="pm-sw" style="background: var(--pm-copper)"></i>RJ45</span>
                     <span><i class="pm-sw" style="background: var(--pm-sfp)"></i>SFP</span>
                     <span><i class="pm-sw" style="background: var(--pm-qsfp)"></i>QSFP</span>
                     <span><i class="pm-sw" style="background: var(--pm-stack)"></i>Stack</span>
-                    <br>
-                    <span>{% trans "Lines are drawn for the focused spoke (click a spoke header) and for the port under the pointer." %}</span>
+                </div>
                 </div>
             </div>
         </div>
