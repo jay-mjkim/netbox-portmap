@@ -15,15 +15,16 @@ knows (interface names and types), so it works for any device type on day one.
 
 ## Features
 
-- Hub/spoke workbench: one device on top, its peers stacked below; add any
-  device from a rack as an extra spoke. Clicking a spoke's header *focuses* it:
-  it moves directly under the hub and its cables to the hub are drawn as lines.
-  Other cables show as tile state and appear as a line when you hover a port
-  or a row of the connection list, so the bench never turns into spaghetti.
-- Port tiles with a colour stripe for the media family (RJ45 / SFP / QSFP /
-  stacking) and a fill state: free, cabled to a device on screen, cabled to a
-  device off screen, pending.
-- Click → click to connect. Incompatible targets are dimmed and explained;
+- Hub/spoke workbench: one device on top, its peers stacked below in the hub's port order
+  (the device on hub port 1 first); add any device from a rack as an extra spoke.
+- Inspect a connection: click a cabled port, a chip or a row of the connection list. Both ends
+  are marked, a hub cable's spoke moves directly under the hub so its line is short, and the
+  inspector shows both ends, type, length, status and label. `←` / `→` step through the hub's
+  cables in port order, `Esc` clears, double-click opens the cable editor.
+- Port tiles with a colour stripe for the media family (RJ45 / SFP / QSFP / stacking) and a fill
+  for the cable status: connected, planned, decommissioning, new (not saved), to delete, free.
+  Hovering shows an immediate tooltip with the far end.
+- Click a free port, then a free port on another device, to connect. Incompatible targets are dimmed and explained;
   each spoke shows how many of its free ports are compatible with the armed port.
 - Cable type and length suggested from the port media and the rack positions;
   edit type, length, label and status before saving.
