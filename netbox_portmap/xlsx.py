@@ -60,7 +60,8 @@ _STYLES = (
     '<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
     '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>'
     '<xf numFmtId="0" fontId="1" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1" '
-    'applyAlignment="1"><alignment horizontal="center"/></xf></cellXfs></styleSheet>'
+    'applyAlignment="1"><alignment horizontal="center"/></xf></cellXfs>'
+    '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>'
 )
 
 
