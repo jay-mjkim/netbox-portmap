@@ -53,8 +53,8 @@ HEADERS = [
     "NetBox",
 ]
 WIDTHS = [9, 20, 11, 18, 12, 12, 32, 20, 7, 7, 20, 11, 18, 12, 32, 10, 13, 9, 10, 10, 40]
-LABEL_HEADERS = ["Label(상)", "Label(하)", "Cable ID"]
-LABEL_WIDTHS = [34, 34, 9]
+LABEL_HEADERS = ["Label(상)", "Label(하)", "길이", "Cable ID"]
+LABEL_WIDTHS = [34, 34, 7, 9]
 
 # What the sheets call a cable type. Anything not listed falls back to NetBox's own value.
 TYPE_LABELS = {
@@ -125,7 +125,7 @@ def _seat(summary: dict | None) -> str:
     if strip:
         rack = re.sub(strip, "", rack)
     pos = summary.get("position")
-    return f"{rack} {int(pos)}U" if pos is not None else rack
+    return f"{rack} {pos:g}U" if pos is not None else rack
 
 
 def _label(summary: dict | None, port: str) -> str:
@@ -274,12 +274,12 @@ def _family_of_row(row: list) -> str:
 
 def workbook(device: Device, absolute=lambda path: path, scope: str = "hub", kind: str = "portmap") -> bytes:
     """``portmap``: one sheet, the hub (faceplate order) or every cable on its rack / site.
-    ``labels``: the two label texts per cable, one sheet per cable family."""
+    ``labels``: the two label texts and the length per cable, one sheet per cable family."""
     rows = hub_rows(device, absolute) if scope == "hub" else entries_for(_devices(device, scope), absolute)
     if kind == "labels":
         sheets = []
         for family in [f for f, _ in FAMILIES] + [OTHER]:
-            body = [[r[6], r[14], r[0]] for r in rows if _family_of_row(r) == family]
+            body = [[r[6], r[14], r[8], r[0]] for r in rows if _family_of_row(r) == family]
             if body:
                 sheets.append(xlsx.Sheet(family, [LABEL_HEADERS] + body, LABEL_WIDTHS))
         if not sheets:
