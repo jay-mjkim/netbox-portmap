@@ -52,6 +52,10 @@
                     <li><a class="dropdown-item" href="{{ export_url }}">{% trans "This hub" %} · {{ hub.name }}</a></li>
                     {% if hub.rack %}<li><a class="dropdown-item" href="{{ export_url }}?scope=rack">{% trans "Rack" %} · {{ hub.rack }}</a></li>{% endif %}
                     <li><a class="dropdown-item" href="{{ export_url }}?scope=site">{% trans "Site" %} · {{ hub.site }}</a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><h6 class="dropdown-header">{% trans "Cable labels" %}</h6></li>
+                    {% if hub.rack %}<li><a class="dropdown-item" href="{{ export_url }}?scope=rack&kind=labels">{% trans "Rack" %} · {{ hub.rack }}</a></li>{% endif %}
+                    <li><a class="dropdown-item" href="{{ export_url }}?scope=site&kind=labels">{% trans "Site" %} · {{ hub.site }}</a></li>
                 </ul>
             </span>
             <span class="text-muted small pm-legend d-none d-xl-inline">
@@ -104,7 +108,7 @@
                         </table>
                     </div>
                 </div>
-                <div class="card mt-3" id="pm-shelf">
+                <div class="card mt-3" id="pm-shelf"{% if not request.GET.rack %} hidden{% endif %}>
                     <div class="card-header d-flex align-items-center">
                         <h5 class="mb-0">{% trans "Shelf" %}</h5>
                         <span class="text-muted small ms-2" id="pm-shelf-rack"></span>

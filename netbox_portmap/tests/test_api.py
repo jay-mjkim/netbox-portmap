@@ -349,7 +349,8 @@ class ViewOnlyCommitTest(APITestCase):
 
 
 class ExportTest(APITestCase):
-    """The port map as a file: the first column is the cable's NetBox id."""
+    """The port map as a file: the first column is the cable's NetBox id, the rest the team's
+    sheet — SRC · Cable · DST · Comment — with the interface ids and link at the end."""
 
     user_permissions = VIEW_PERMS
 
@@ -357,12 +358,13 @@ class ExportTest(APITestCase):
     def setUpTestData(cls):
         cls.f = build_fixture()
 
-    def sheet(self, res):
+    @staticmethod
+    def sheet(res, index=1):
         import re
         import zipfile
         from io import BytesIO
 
-        xml = zipfile.ZipFile(BytesIO(res.content)).read("xl/worksheets/sheet1.xml").decode()
+        xml = zipfile.ZipFile(BytesIO(res.content)).read(f"xl/worksheets/sheet{index}.xml").decode()
         rows = []
         for row in re.findall(r"<row [^>]*>(.*?)</row>", xml):
             cells = {}
@@ -373,70 +375,99 @@ class ExportTest(APITestCase):
             rows.append(cells)
         return rows
 
+    @staticmethod
+    def sheet_names(res):
+        import re
+        import zipfile
+        from io import BytesIO
+
+        return re.findall(
+            r'<sheet name="([^"]+)"', zipfile.ZipFile(BytesIO(res.content)).read("xl/workbook.xml").decode()
+        )
+
+    def export(self, pk=None, **params):
+        url = reverse("plugins-api:netbox_portmap-api:portmap-device-export", kwargs={"pk": pk or self.f.sw.pk})
+        return self.client.get(url, params, **self.header)
+
     def test_the_first_column_is_the_netbox_cable_id(self):
-        url = reverse("plugins-api:netbox_portmap-api:portmap-device-export", kwargs={"pk": self.f.sw.pk})
-        res = self.client.get(url, **self.header)
+        res = self.export()
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res["Content-Type"], "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         self.assertIn("sw1_portmap_", res["Content-Disposition"])
         group, header, *body = self.sheet(res)
-        self.assertEqual((group["A"], group["C"], group["I"], group["O"]), ("NetBox", "SRC", "Cable", "DST"))
-        self.assertEqual((header["A"], header["G"], header["S"]), ("Cable ID", "Interface ID", "Interface ID"))
+        self.assertEqual(
+            (group["A"], group["B"], group["H"], group["K"], group["P"]), ("NetBox", "SRC", "Cable", "DST", "Comment")
+        )
+        self.assertEqual(
+            (header["A"], header["E"], header["G"], header["S"], header["T"]),
+            ("Cable ID", "Port", "Label(상)", "SRC Itf ID", "DST Itf ID"),
+        )
         [row] = body
         self.assertEqual(row["A"], str(self.f.cable.pk))
-        self.assertEqual((row["E"], row["F"], row["G"]), ("sw1", "GigabitEthernet1/0/1", str(self.f.sw_ports[0].pk)))
-        self.assertEqual((row["Q"], row["R"], row["S"]), ("srv1", "eno0", str(self.f.srv1_eno0.pk)))
-        self.assertEqual((row["D"], row["P"]), ("R-01 40U", "R-01 10U"))
-        self.assertEqual(row["H"], "sw1, GigabitEthernet1/0/1, R-01 40U")
-        self.assertEqual(row["I"], "cat6")
+        # Ports in the short form the labels use: GigabitEthernet1/0/1 -> 1.
+        self.assertEqual((row["D"], row["E"], row["F"]), ("sw1", "1", "Down"))
+        self.assertEqual(row["G"], "sw1, 1, R-01 40U")
+        self.assertEqual((row["H"], row["P"], row.get("R", "")), ("UTP CAT 6", "✅", ""))
+        self.assertEqual((row["M"], row["N"], row["O"]), ("srv1", "eno0", "srv1, eno0, R-01 10U"))
+        self.assertEqual((row["S"], row["T"]), (str(self.f.sw_ports[0].pk), str(self.f.srv1_eno0.pk)))
         self.assertTrue(row["U"].endswith(f"/dcim/cables/{self.f.cable.pk}/"))
+
+    def test_labels_come_one_sheet_per_family(self):
+        res = self.export(scope="site", kind="labels")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("Site 1_labels_", res["Content-Disposition"].replace("%20", " "))
+        self.assertEqual(self.sheet_names(res), ["UTP"])
+        header, row = self.sheet(res)
+        self.assertEqual((header["A"], header["B"], header["C"]), ("Label(상)", "Label(하)", "Cable ID"))
+        self.assertEqual(row["C"], str(self.f.cable.pk))
+        self.assertEqual({row["A"], row["B"]}, {"sw1, 1, R-01 40U", "srv1, eno0, R-01 10U"})
+
+    def test_an_unknown_scope_or_kind_is_refused(self):
+        self.assertEqual(self.export(scope="building").status_code, 400)
+        self.assertEqual(self.export(kind="stickers").status_code, 400)
 
 
 class ExportScopeTest(APITestCase):
-    """A rack or a site on one sheet: every cable once, the server end on the left."""
+    """A rack or a site on one sheet: every cable once, the upstream end on the left."""
 
     user_permissions = VIEW_PERMS
 
     @classmethod
     def setUpTestData(cls):
         cls.f = build_fixture()
-        cable = Cable(a_terminations=[cls.f.sw_ports[1]], b_terminations=[cls.f.srv2_eno0], type="cat6a")
+        l2 = DeviceRole.objects.create(name="SVC L2 Switch", slug="svc-l2")
+        cls.f.sw.role = l2
+        cls.f.sw.save()
+        cable = Cable(a_terminations=[cls.f.srv2_eno0], b_terminations=[cls.f.sw_ports[1]], type="cat6a")
         cable.full_clean()
         cable.save()
         cls.second = cable
+        mgmt = Cable(a_terminations=[cls.f.sw_mgmt], b_terminations=[cls.f.srv1_eno1], type="cat6")
+        mgmt.full_clean()
+        mgmt.save()
+        cls.mgmt = mgmt
 
-    def export(self, scope):
-        url = reverse("plugins-api:netbox_portmap-api:portmap-device-export", kwargs={"pk": self.f.sw.pk})
-        return self.client.get(url, {"scope": scope}, **self.header)
+    def rows(self, pk, scope):
+        url = reverse("plugins-api:netbox_portmap-api:portmap-device-export", kwargs={"pk": pk})
+        return ExportTest.sheet(self.client.get(url, {"scope": scope}, **self.header))[2:]
 
-    def test_site_lists_every_cable_once_with_the_server_as_src(self):
-        res = self.export("site")
-        self.assertEqual(res.status_code, 200)
-        self.assertIn("Site 1_portmap_", res["Content-Disposition"].replace("%20", " "))
-        rows = ExportTest.sheet(self, res)[2:]
-        self.assertEqual(sorted(r["A"] for r in rows), sorted([str(self.f.cable.pk), str(self.second.pk)]))
-        # The server has one cable, the switch two: the server is SRC on every row.
-        self.assertEqual({r["E"] for r in rows}, {"srv1", "srv2"})
-        self.assertEqual({r["Q"] for r in rows}, {"sw1"})
-        # Rack R-01 before R-03.
-        self.assertEqual([r["E"] for r in rows], ["srv1", "srv2"])
+    def test_site_lists_every_cable_once_upstream_first(self):
+        rows = self.rows(self.f.sw.pk, "site")
+        self.assertEqual(
+            sorted(r["A"] for r in rows), sorted(str(c.pk) for c in (self.f.cable, self.second, self.mgmt))
+        )
+        # The L2 switch is upstream of the servers, so it is SRC — whichever end NetBox calls A.
+        by_id = {r["A"]: r for r in rows}
+        self.assertEqual((by_id[str(self.second.pk)]["D"], by_id[str(self.second.pk)]["M"]), ("sw1", "srv2"))
+        # A management port is SRC of its own cable, upstream or not.
+        self.assertEqual((by_id[str(self.mgmt.pk)]["D"], by_id[str(self.mgmt.pk)]["E"]), ("sw1", "mgmt0"))
+        # Switch rows before server rows; within the switch, ports in natural order.
+        self.assertEqual([r["E"] for r in rows], ["1", "2", "mgmt0"])
 
     def test_rack_keeps_to_the_rack(self):
-        rows = ExportTest.sheet(self, self.export("rack"))[2:]
-        # srv2 sits in R-03, but its cable reaches sw1 in R-01, so it is on the rack's sheet.
-        self.assertEqual(len(rows), 2)
-        rows = ExportTest.sheet(
-            self,
-            self.client.get(
-                reverse("plugins-api:netbox_portmap-api:portmap-device-export", kwargs={"pk": self.f.srv2.pk}),
-                {"scope": "rack"},
-                **self.header,
-            ),
-        )[2:]
-        self.assertEqual([r["A"] for r in rows], [str(self.second.pk)])
-
-    def test_an_unknown_scope_is_refused(self):
-        self.assertEqual(self.export("building").status_code, 400)
+        self.assertEqual(len(self.rows(self.f.sw.pk, "rack")), 3)
+        # srv2 sits in R-03: its rack has the one cable that reaches it.
+        self.assertEqual([r["A"] for r in self.rows(self.f.srv2.pk, "rack")], [str(self.second.pk)])
 
 
 class ExportRestrictedTest(APITestCase):

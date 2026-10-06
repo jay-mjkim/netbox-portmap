@@ -1,6 +1,6 @@
 from netbox.plugins import PluginConfig
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 
 class NetBoxPortMapConfig(PluginConfig):
@@ -53,6 +53,11 @@ class NetBoxPortMapConfig(PluginConfig):
         },
         # Default status for cables created from the workbench.
         "cable_status": "planned",
+        # Excel export. The rack prefix dropped from a seat on a label ("3F-03-18" is printed
+        # "03-18"); None keeps the rack name whole. Cable type names as the sheets say them,
+        # by NetBox type; types not listed use NetBox's own label.
+        "seat_strip_prefix": r"^\d+F-",
+        "cable_type_labels": {},
     }
 
 
