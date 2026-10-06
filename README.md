@@ -35,6 +35,10 @@ knows (interface names and types), so it works for any device type on day one.
 - A **Port Map** tab on every device page.
 - No dependency on other plugins.
 
+- **Excel download** — the hub's cables as an `.xlsx`, in faceplate order, with the
+  NetBox cable id in the first column and each end's interface id, so a row in the sheet can
+  be found again in NetBox. No spreadsheet library needed.
+
 ## Compatibility
 
 | netbox-portmap | NetBox |
@@ -116,6 +120,7 @@ The workbench talks to its own endpoints under `/api/plugins/portmap/`:
 | `GET racks/<id>/devices/` | racked devices (the shelf) |
 | `POST check/` `{"a": id, "b": id}` or `{"a": id, "targets": [ids]}` | compatibility verdict + suggested cable type/length |
 | `POST commit/` `{"create": [...], "update": [...], "delete": [...]}` | apply staged changes atomically |
+| `GET devices/<id>/export/` | the port map as `.xlsx` — NetBox cable and interface ids in the first columns |
 
 ## Development
 

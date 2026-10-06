@@ -3,6 +3,7 @@ Workbench API.
 
     GET  devices/<id>/ports/        the device, its ports on a grid, cables and peers
     GET  devices/<id>/peers/        devices it has cables to (the initial spoke list)
+    GET  devices/<id>/export/       the hub's cables as an .xlsx, NetBox ids in the first columns
     GET  racks/<id>/devices/        racked devices of a rack (the shelf)
     POST check/                     {"a": <interface id>, "b": <interface id>}
                                     -> compatibility verdict + suggested type/length
@@ -15,10 +16,14 @@ half-finished session never leaves partial cabling behind.
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from dcim.models import Cable, Device, Interface, Rack
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from netbox.api.authentication import TokenPermissions
 from netbox.plugins import get_plugin_config
 from rest_framework import serializers, status, viewsets
@@ -26,7 +31,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .. import data, lengths, media
+from .. import data, export, lengths, media
 
 
 class ReadOnlyPermissions(TokenPermissions):
@@ -53,6 +58,18 @@ class DeviceViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["get"])
     def peers(self, request, pk=None):
         return Response({"peers": data.peer_devices(self._device(request, pk), request.user)})
+
+    @action(detail=True, methods=["get"])
+    def export(self, request, pk=None):
+        """The port map as a spreadsheet. The first column is the cable's NetBox id and each
+        end carries its interface id, so a row can be found again — and a change made from the
+        sheet lands on the right cable."""
+        device = self._device(request, pk)
+        body = export.workbook(device, request.build_absolute_uri)
+        name = export.filename(device, timezone.localdate())
+        response = HttpResponse(body, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(name)}"
+        return response
 
 
 class RackViewSet(viewsets.ViewSet):
