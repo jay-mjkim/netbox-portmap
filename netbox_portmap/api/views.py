@@ -4,6 +4,7 @@ Workbench API.
     GET  devices/<id>/ports/        the device, its ports on a grid, cables and peers
     GET  devices/<id>/peers/        devices it has cables to (the initial spoke list)
     GET  devices/<id>/export/       the hub's cables as an .xlsx, NetBox ids in the first columns
+                                    ?scope=rack|site widens it to every cable on the rack / site
     GET  racks/<id>/devices/        racked devices of a rack (the shelf)
     POST check/                     {"a": <interface id>, "b": <interface id>}
                                     -> compatibility verdict + suggested type/length
@@ -65,8 +66,11 @@ class DeviceViewSet(viewsets.ViewSet):
         end carries its interface id, so a row can be found again — and a change made from the
         sheet lands on the right cable."""
         device = self._device(request, pk)
-        body = export.workbook(device, request.build_absolute_uri)
-        name = export.filename(device, timezone.localdate())
+        scope = request.query_params.get("scope") or "hub"
+        if scope not in export.SCOPES:
+            return Response({"detail": f"scope must be one of {', '.join(export.SCOPES)}"}, status=400)
+        body = export.workbook(device, request.build_absolute_uri, scope)
+        name = export.filename(device, timezone.localdate(), scope)
         response = HttpResponse(body, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(name)}"
         return response

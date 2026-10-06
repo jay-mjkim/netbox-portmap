@@ -284,7 +284,7 @@
     }
     for (const grp of g.groups) {
       const width = (grp.end - grp.start + 1) * PITCH + (grp.end < g.cols - 1 ? PITCH - 6 : -4); // may run into the gap
-      inner.append(el("span", { class: "pm-group", style: `left:${grp.start * PITCH}px; max-width:${width}px`, title: grp.label }, grp.label));
+      inner.append(el("span", { class: "pm-group", style: `left:${grp.start * PITCH}px; max-width:${width}px`, title: grp.label }, shortIf(grp.label)));
     }
     return el("div", { class: "pm-grid", onscroll: scheduleLines }, inner);
   }

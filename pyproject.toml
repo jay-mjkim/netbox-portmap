@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "netbox-portmap"
-version = "0.4.0"
+version = "0.5.0"
 description = "NetBox plugin: map ports between devices visually and create the cables, with media compatibility checks."
 readme = "README.md"
 license = { text = "MIT" }

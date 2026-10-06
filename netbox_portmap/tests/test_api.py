@@ -392,6 +392,53 @@ class ExportTest(APITestCase):
         self.assertTrue(row["U"].endswith(f"/dcim/cables/{self.f.cable.pk}/"))
 
 
+class ExportScopeTest(APITestCase):
+    """A rack or a site on one sheet: every cable once, the server end on the left."""
+
+    user_permissions = VIEW_PERMS
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.f = build_fixture()
+        cable = Cable(a_terminations=[cls.f.sw_ports[1]], b_terminations=[cls.f.srv2_eno0], type="cat6a")
+        cable.full_clean()
+        cable.save()
+        cls.second = cable
+
+    def export(self, scope):
+        url = reverse("plugins-api:netbox_portmap-api:portmap-device-export", kwargs={"pk": self.f.sw.pk})
+        return self.client.get(url, {"scope": scope}, **self.header)
+
+    def test_site_lists_every_cable_once_with_the_server_as_src(self):
+        res = self.export("site")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("Site 1_portmap_", res["Content-Disposition"].replace("%20", " "))
+        rows = ExportTest.sheet(self, res)[2:]
+        self.assertEqual(sorted(r["A"] for r in rows), sorted([str(self.f.cable.pk), str(self.second.pk)]))
+        # The server has one cable, the switch two: the server is SRC on every row.
+        self.assertEqual({r["E"] for r in rows}, {"srv1", "srv2"})
+        self.assertEqual({r["Q"] for r in rows}, {"sw1"})
+        # Rack R-01 before R-03.
+        self.assertEqual([r["E"] for r in rows], ["srv1", "srv2"])
+
+    def test_rack_keeps_to_the_rack(self):
+        rows = ExportTest.sheet(self, self.export("rack"))[2:]
+        # srv2 sits in R-03, but its cable reaches sw1 in R-01, so it is on the rack's sheet.
+        self.assertEqual(len(rows), 2)
+        rows = ExportTest.sheet(
+            self,
+            self.client.get(
+                reverse("plugins-api:netbox_portmap-api:portmap-device-export", kwargs={"pk": self.f.srv2.pk}),
+                {"scope": "rack"},
+                **self.header,
+            ),
+        )[2:]
+        self.assertEqual([r["A"] for r in rows], [str(self.second.pk)])
+
+    def test_an_unknown_scope_is_refused(self):
+        self.assertEqual(self.export("building").status_code, 400)
+
+
 class ExportRestrictedTest(APITestCase):
     """The file says no more than the screen: a hub the user may not view is not exported."""
 
