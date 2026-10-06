@@ -238,8 +238,8 @@
       !c.isHub && state.focus === d.id ? el("span", { class: "badge bg-primary-lt ms-1" }, "focus") : null,
       el("span", { class: "ms-auto d-flex align-items-center gap-2" },
         el("span", { class: "pm-compat", dataset: { compat: d.id } }),
-        !c.isHub && toHub ? el("span", { class: "text-muted small", title: "cables to the hub" }, `${toHub} to hub`) : null,
-        el("span", { class: "text-muted small", title: "cabled / total ports" }, `${cabled} / ${c.ports.length}`),
+        !c.isHub && toHub ? el("span", { class: "text-muted small", title: "cables between this device and the hub" }, `${toHub} ↔ hub`) : null,
+        el("span", { class: "text-muted small", title: "cabled ports / physical ports" }, `${cabled}/${c.ports.length} cabled`),
         !c.isHub && cablesToBench(c) === 0 && !c.busy
           ? el("button", { type: "button", class: "btn-close", "aria-label": "Remove from bench", onclick: () => removeSpoke(c) })
           : null,
@@ -1114,6 +1114,7 @@
       return;
     }
     $("#pm-shelf-rack").textContent = shelf.rack.name;
+    $("#pm-shelf").hidden = false;
     renderShelf();
   }
 

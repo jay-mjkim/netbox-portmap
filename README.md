@@ -36,8 +36,10 @@ knows (interface names and types), so it works for any device type on day one.
 - No dependency on other plugins.
 
 - **Excel download** — the hub's cables in faceplate order, or every cable on the hub's
-  rack or site on one sheet, with the NetBox cable id in the first column and each end's
-  interface id, so a row in the sheet can be found again in NetBox. No spreadsheet library needed.
+  rack or site on one sheet, in the port-map layout (SRC · Cable · DST · Comment) with the
+  NetBox cable id first and each end's interface id, so a row can be found again in NetBox.
+  Cable labels too: `HOST, PORT, RACK U` for both ends, one sheet per cable family. No
+  spreadsheet library needed.
 
 ## Compatibility
 
@@ -103,6 +105,10 @@ PLUGINS_CONFIG = {
 }
 ```
 
+Export conventions are settings too: `seat_strip_prefix` (regex dropped from a rack name on a
+label, default `^\d+F-` so `3F-03-18` prints as `03-18`) and `cable_type_labels` (NetBox cable
+type → the name the sheets use; the built-in table covers AOC, DAC, CAT6/6a, OM2/OM3/OM4 and SMF).
+
 ## Permissions
 
 Viewing needs `dcim.view_device`, `dcim.view_interface` and `dcim.view_cable`.
@@ -120,7 +126,7 @@ The workbench talks to its own endpoints under `/api/plugins/portmap/`:
 | `GET racks/<id>/devices/` | racked devices (the shelf) |
 | `POST check/` `{"a": id, "b": id}` or `{"a": id, "targets": [ids]}` | compatibility verdict + suggested cable type/length |
 | `POST commit/` `{"create": [...], "update": [...], "delete": [...]}` | apply staged changes atomically |
-| `GET devices/<id>/export/?scope=hub\|rack\|site` | the port map as `.xlsx` — NetBox cable and interface ids in the first columns |
+| `GET devices/<id>/export/?scope=hub\|rack\|site&kind=portmap\|labels` | the port map, or the cable labels, as `.xlsx` — NetBox cable and interface ids included |
 
 ## Development
 
