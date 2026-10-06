@@ -38,7 +38,7 @@ knows (interface names and types), so it works for any device type on day one.
 - **Excel download** — the hub's cables in faceplate order, or every cable on the hub's
   rack or site on one sheet, in the port-map layout (SRC · Cable · DST · Comment) with the
   NetBox cable id first and each end's interface id, so a row can be found again in NetBox.
-  Cable labels too: `HOST, PORT, RACK U` for both ends, one sheet per cable family. No
+  Cable labels too: `HOST, PORT, RACK U` for both ends plus the length, one sheet per cable family. No
   spreadsheet library needed.
 
 ## Compatibility

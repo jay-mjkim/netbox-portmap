@@ -418,8 +418,10 @@ class ExportTest(APITestCase):
         self.assertIn("Site 1_labels_", res["Content-Disposition"].replace("%20", " "))
         self.assertEqual(self.sheet_names(res), ["UTP"])
         header, row = self.sheet(res)
-        self.assertEqual((header["A"], header["B"], header["C"]), ("Label(상)", "Label(하)", "Cable ID"))
-        self.assertEqual(row["C"], str(self.f.cable.pk))
+        self.assertEqual(
+            (header["A"], header["B"], header["C"], header["D"]), ("Label(상)", "Label(하)", "길이", "Cable ID")
+        )
+        self.assertEqual((row.get("C", ""), row["D"]), ("", str(self.f.cable.pk)))
         self.assertEqual({row["A"], row["B"]}, {"sw1, 1, R-01 40U", "srv1, eno0, R-01 10U"})
 
     def test_an_unknown_scope_or_kind_is_refused(self):
