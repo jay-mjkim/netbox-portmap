@@ -42,12 +42,25 @@
                 </button>
                 <span class="text-muted small" id="pm-spoke-count"></span>
             </span>
-            <span class="ms-auto d-flex align-items-center gap-2">
-                <a class="btn btn-sm btn-outline-secondary" id="pm-export"
-                   href="{% url 'plugins-api:netbox_portmap-api:portmap-device-export' pk=hub.pk %}"
-                   title="{% trans 'Download the port map as a spreadsheet — NetBox cable and interface ids in the first columns' %}">
+            {% url 'plugins-api:netbox_portmap-api:portmap-device-export' pk=hub.pk as export_url %}
+            <span class="dropdown">
+                <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" id="pm-export" data-bs-toggle="dropdown" aria-expanded="false"
+                        title="{% trans 'Download a port map as a spreadsheet — NetBox cable and interface ids in the first columns' %}">
                     <i class="mdi mdi-file-excel-outline" aria-hidden="true"></i> Excel
-                </a>
+                </button>
+                <ul class="dropdown-menu">
+                    <li><a class="dropdown-item" href="{{ export_url }}">{% trans "This hub" %} · {{ hub.name }}</a></li>
+                    {% if hub.rack %}<li><a class="dropdown-item" href="{{ export_url }}?scope=rack">{% trans "Rack" %} · {{ hub.rack }}</a></li>{% endif %}
+                    <li><a class="dropdown-item" href="{{ export_url }}?scope=site">{% trans "Site" %} · {{ hub.site }}</a></li>
+                </ul>
+            </span>
+            <span class="text-muted small pm-legend d-none d-xl-inline">
+                <span><i class="pm-sw st-connected"></i>{% trans "connected" %}</span>
+                <span><i class="pm-sw st-planned"></i>{% trans "planned" %}</span>
+                <span><i class="pm-sw pend"></i>{% trans "new" %}</span>
+                <span><i class="pm-sw del"></i>{% trans "to delete" %}</span>
+            </span>
+            <span class="ms-auto d-flex align-items-center gap-2">
                 <span id="pm-pending" class="badge bg-blue-lt" title="{% trans 'Changes not yet saved' %}">{% trans "Pending" %} 0</span>
                 {% if can_edit %}
                     <button type="button" class="btn btn-sm btn-outline-secondary" id="pm-discard" disabled>{% trans "Discard" %}</button>

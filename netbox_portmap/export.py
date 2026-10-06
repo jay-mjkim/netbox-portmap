@@ -10,9 +10,13 @@ on the right cable rather than on "row 37".
 
 from __future__ import annotations
 
-from dcim.models import Cable, Device
+import re
 
-from . import data, xlsx
+from dcim.models import Cable, CableTermination, Device, Interface
+
+from . import data, media, xlsx
+
+SCOPES = ("hub", "rack", "site")
 
 GROUPS = [(0, 1, "NetBox"), (2, 7, "SRC"), (8, 13, "Cable"), (14, 19, "DST"), (20, 20, "")]
 HEADERS = [
@@ -112,11 +116,114 @@ def colours(table: list[list]) -> None:
         row[13] = f"{row[9]:g}{row[10]}".upper() if row[9] is not None else ""
 
 
-def workbook(device: Device, absolute=lambda path: path) -> bytes:
-    table = rows(device, absolute)
+def _natural(name: str):
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", name or "")]
+
+
+def rows_for(devices, absolute=lambda path: path) -> list[list]:
+    """Every cable touching one of ``devices``, once each — a rack or a site on one sheet.
+
+    A cable has no direction in NetBox, but a port map has: the sheets put the server on the
+    left and the switch on the right. The end whose device has fewer cabled ports is written as
+    SRC (a server has a handful, a switch has dozens); between equals the A end is SRC. Rows
+    are ordered by the SRC device's rack and position, top of the rack first, then port.
+    """
+    devices = list(devices)
+    by_pk = {d.pk: d for d in devices}
+    interfaces = (
+        Interface.objects.filter(device__in=devices, cable__isnull=False)
+        .exclude(type__in=media.VIRTUAL_TYPES)
+        .select_related("cable", "device")
+    )
+    cabled_count: dict[int, int] = {}
+    for itf in interfaces:
+        cabled_count[itf.device_id] = cabled_count.get(itf.device_id, 0) + 1
+    cable_ids = {itf.cable_id for itf in interfaces}
+    ends: dict[int, dict[str, Interface]] = {}
+    far_ids = set()
+    for term in (
+        CableTermination.objects.filter(cable_id__in=cable_ids).select_related("termination_type").order_by("pk")
+    ):
+        if term.termination_type.model != "interface":
+            continue
+        ends.setdefault(term.cable_id, {}).setdefault(term.cable_end, term.termination_id)
+        far_ids.add(term.termination_id)
+    itf_by_id = Interface.objects.filter(pk__in=far_ids).select_related("device", "cable").in_bulk()
+    far_devices = {i.device_id for i in itf_by_id.values()} - set(by_pk)
+    for d in Device.objects.filter(pk__in=far_devices).select_related("site", "rack", "device_type", "role"):
+        by_pk[d.pk] = d
+    for itf in Interface.objects.filter(device_id__in=far_devices, cable__isnull=False):
+        cabled_count[itf.device_id] = cabled_count.get(itf.device_id, 0) + 1
+    summaries = {pk: data.device_summary(d) for pk, d in by_pk.items()}
+    entries = []
+    for side in ends.values():
+        a, b = itf_by_id.get(side.get("A")), itf_by_id.get(side.get("B"))
+        if a is None or b is None:
+            continue
+        src, dst = (a, b) if cabled_count.get(a.device_id, 0) <= cabled_count.get(b.device_id, 0) else (b, a)
+        entries.append((src, dst))
+    entries.sort(
+        key=lambda e: (
+            (summaries[e[0].device_id].get("rack") or ""),
+            -(summaries[e[0].device_id].get("position") or 0),
+            e[0].device.name or "",
+            _natural(e[0].name),
+        )
+    )
+    out = [HEADERS]
+    for src, dst in entries:
+        cable = src.cable
+        hub, far = summaries[src.device_id], summaries[dst.device_id]
+        out.append(
+            [
+                cable.pk,
+                cable.status or "",
+                hub.get("role") or "",
+                _seat(hub),
+                hub["name"],
+                src.name,
+                src.pk,
+                _label(hub, src.name),
+                cable.type or "",
+                float(cable.length) if cable.length is not None else None,
+                cable.length_unit or "",
+                cable.label or "",
+                "",
+                "",
+                far.get("role") or "",
+                _seat(far),
+                far["name"],
+                dst.name,
+                dst.pk,
+                _label(far, dst.name),
+                absolute(f"/dcim/cables/{cable.pk}/"),
+            ]
+        )
+    return out
+
+
+def workbook(device: Device, absolute=lambda path: path, scope: str = "hub") -> bytes:
+    """``hub``: this device's cables in faceplate order. ``rack`` / ``site``: every cable on
+    the hub's rack or site, one sheet, the port map the team keeps."""
+    if scope == "hub":
+        table = rows(device, absolute)
+    elif scope == "rack":
+        table = rows_for(Device.objects.filter(rack=device.rack) if device.rack_id else [device], absolute)
+    else:
+        table = rows_for(Device.objects.filter(site=device.site), absolute)
     colours(table)
-    return xlsx.workbook("Port Map", table, widths=WIDTHS, group_row=GROUPS)
+    title = {
+        "hub": "Port Map",
+        "rack": f"Rack {device.rack.name}" if device.rack_id else "Port Map",
+        "site": str(device.site),
+    }[scope]
+    return xlsx.workbook(title, table, widths=WIDTHS, group_row=GROUPS)
 
 
-def filename(device: Device, today) -> str:
-    return f"{device.name or device.pk}_portmap_{today:%Y%m%d}.xlsx"
+def filename(device: Device, today, scope: str = "hub") -> str:
+    stem = {
+        "hub": device.name or str(device.pk),
+        "rack": device.rack.name if device.rack_id else (device.name or str(device.pk)),
+        "site": device.site.name,
+    }[scope]
+    return f"{stem}_portmap_{today:%Y%m%d}.xlsx"
