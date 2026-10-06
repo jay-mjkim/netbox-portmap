@@ -444,7 +444,9 @@ class ExportScopeTest(APITestCase):
         cable.full_clean()
         cable.save()
         cls.second = cable
-        mgmt = Cable(a_terminations=[cls.f.sw_mgmt], b_terminations=[cls.f.srv1_eno1], type="cat6")
+        mgmt = Cable(
+            a_terminations=[cls.f.sw_mgmt], b_terminations=[cls.f.srv1_eno1], type="cat6", length=3, length_unit="m"
+        )
         mgmt.full_clean()
         mgmt.save()
         cls.mgmt = mgmt
@@ -461,8 +463,10 @@ class ExportScopeTest(APITestCase):
         # The L2 switch is upstream of the servers, so it is SRC — whichever end NetBox calls A.
         by_id = {r["A"]: r for r in rows}
         self.assertEqual((by_id[str(self.second.pk)]["D"], by_id[str(self.second.pk)]["M"]), ("sw1", "srv2"))
-        # A management port is SRC of its own cable, upstream or not.
+        # A management port is SRC of its own cable, upstream or not; the label ends with the length.
         self.assertEqual((by_id[str(self.mgmt.pk)]["D"], by_id[str(self.mgmt.pk)]["E"]), ("sw1", "mgmt0"))
+        self.assertEqual(by_id[str(self.mgmt.pk)]["G"], "sw1, mgmt0, R-01 40U, 3M")
+        self.assertEqual(by_id[str(self.mgmt.pk)]["O"], "srv1, eno1, R-01 10U, 3M")
         # Switch rows before server rows; within the switch, ports in natural order.
         self.assertEqual([r["E"] for r in rows], ["1", "2", "mgmt0"])
 

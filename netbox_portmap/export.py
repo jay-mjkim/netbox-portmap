@@ -13,7 +13,7 @@ Direction and sides follow the sheets' convention: the upstream end is SRC
 is always the SRC of its own cable, and a link is written as "Down" from SRC
 to DST. Ties — a stack cable between two L3 switches — keep NetBox's A end as
 SRC. Labels read ``HOST, PORT, RACK U`` with the rack's floor prefix dropped,
-the way they are printed.
+the way they are printed, and end with the cable's length.
 """
 
 from __future__ import annotations
@@ -128,11 +128,12 @@ def _seat(summary: dict | None) -> str:
     return f"{rack} {pos:g}U" if pos is not None else rack
 
 
-def _label(summary: dict | None, port: str) -> str:
-    """``ICN-CON-FW-01, x1, 03-18 42U`` — what is printed on the cable's tag."""
+def _label(summary: dict | None, port: str, length: str = "") -> str:
+    """``ICN-CON-FW-01, x1, 03-18 42U, 5M`` — what is printed on the cable's tag: the device,
+    the port, where it sits, and the cable's length so the right reel is picked up."""
     if not summary:
         return ""
-    return ", ".join(part for part in (summary.get("name", ""), port, _seat(summary)) if part)
+    return ", ".join(part for part in (summary.get("name", ""), port, _seat(summary), length) if part)
 
 
 def _length(cable) -> str:
@@ -147,6 +148,7 @@ def _natural(name: str):
 
 def _row(cable, src: Interface, dst: Interface, hub: dict, far: dict, direction: str, absolute) -> list:
     sp, dp = short_port(src.name), short_port(dst.name)
+    length = _length(cable)
     return [
         cable.pk,
         hub.get("role") or "",
@@ -154,15 +156,15 @@ def _row(cable, src: Interface, dst: Interface, hub: dict, far: dict, direction:
         hub["name"],
         sp,
         direction,
-        _label(hub, sp),
+        _label(hub, sp, length),
         type_label(cable.type),
-        _length(cable),
+        length,
         "",
         far.get("role") or "",
         _seat(far),
         far["name"],
         dp,
-        _label(far, dp),
+        _label(far, dp, length),
         "✅" if cable.status == "connected" else "",
         "",
         "Planned" if cable.status == "planned" else "",
