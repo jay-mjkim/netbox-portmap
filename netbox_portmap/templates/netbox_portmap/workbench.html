@@ -43,6 +43,11 @@
                 <span class="text-muted small" id="pm-spoke-count"></span>
             </span>
             <span class="ms-auto d-flex align-items-center gap-2">
+                <a class="btn btn-sm btn-outline-secondary" id="pm-export"
+                   href="{% url 'plugins-api:netbox_portmap-api:portmap-device-export' pk=hub.pk %}"
+                   title="{% trans 'Download the port map as a spreadsheet — NetBox cable and interface ids in the first columns' %}">
+                    <i class="mdi mdi-file-excel-outline" aria-hidden="true"></i> Excel
+                </a>
                 <span id="pm-pending" class="badge bg-blue-lt" title="{% trans 'Changes not yet saved' %}">{% trans "Pending" %} 0</span>
                 {% if can_edit %}
                     <button type="button" class="btn btn-sm btn-outline-secondary" id="pm-discard" disabled>{% trans "Discard" %}</button>

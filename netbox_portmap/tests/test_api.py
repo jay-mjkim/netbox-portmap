@@ -346,3 +346,69 @@ class ViewOnlyCommitTest(APITestCase):
         url = reverse("plugins-api:netbox_portmap-api:portmap-commit-list")
         res = self.client.post(url, {"update": [{"id": self.f.cable.pk, "label": "x"}]}, format="json", **self.header)
         self.assertEqual(res.status_code, 403)
+
+
+class ExportTest(APITestCase):
+    """The port map as a file: the first column is the cable's NetBox id."""
+
+    user_permissions = VIEW_PERMS
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.f = build_fixture()
+
+    def sheet(self, res):
+        import re
+        import zipfile
+        from io import BytesIO
+
+        xml = zipfile.ZipFile(BytesIO(res.content)).read("xl/worksheets/sheet1.xml").decode()
+        rows = []
+        for row in re.findall(r"<row [^>]*>(.*?)</row>", xml):
+            cells = {}
+            for ref, body in re.findall(r'<c r="([A-Z]+)\d+"[^>]*?(?:/>|>(.*?)</c>)', row):
+                text = re.search(r"<t[^>]*>(.*?)</t>", body or "")
+                value = re.search(r"<v>(.*?)</v>", body or "")
+                cells[ref] = text.group(1) if text else (value.group(1) if value else "")
+            rows.append(cells)
+        return rows
+
+    def test_the_first_column_is_the_netbox_cable_id(self):
+        url = reverse("plugins-api:netbox_portmap-api:portmap-device-export", kwargs={"pk": self.f.sw.pk})
+        res = self.client.get(url, **self.header)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res["Content-Type"], "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        self.assertIn("sw1_portmap_", res["Content-Disposition"])
+        group, header, *body = self.sheet(res)
+        self.assertEqual((group["A"], group["C"], group["I"], group["O"]), ("NetBox", "SRC", "Cable", "DST"))
+        self.assertEqual((header["A"], header["G"], header["S"]), ("Cable ID", "Interface ID", "Interface ID"))
+        [row] = body
+        self.assertEqual(row["A"], str(self.f.cable.pk))
+        self.assertEqual((row["E"], row["F"], row["G"]), ("sw1", "GigabitEthernet1/0/1", str(self.f.sw_ports[0].pk)))
+        self.assertEqual((row["Q"], row["R"], row["S"]), ("srv1", "eno0", str(self.f.srv1_eno0.pk)))
+        self.assertEqual((row["D"], row["P"]), ("R-01 40U", "R-01 10U"))
+        self.assertEqual(row["H"], "sw1, GigabitEthernet1/0/1, R-01 40U")
+        self.assertEqual(row["I"], "cat6")
+        self.assertTrue(row["U"].endswith(f"/dcim/cables/{self.f.cable.pk}/"))
+
+
+class ExportRestrictedTest(APITestCase):
+    """The file says no more than the screen: a hub the user may not view is not exported."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.f = build_fixture()
+
+    def setUp(self):
+        super().setUp()
+        perm = ObjectPermission.objects.create(name="other site", actions=["view"], constraints={"site__name": "x"})
+        perm.object_types.set([ObjectType.objects.get(app_label="dcim", model="device")])
+        perm.users.add(self.user)
+        for model in ("interface", "cable"):
+            p = ObjectPermission.objects.create(name=f"view {model}", actions=["view"])
+            p.object_types.set([ObjectType.objects.get(app_label="dcim", model=model)])
+            p.users.add(self.user)
+
+    def test_a_device_the_user_may_not_see_is_not_exported(self):
+        url = reverse("plugins-api:netbox_portmap-api:portmap-device-export", kwargs={"pk": self.f.sw.pk})
+        self.assertEqual(self.client.get(url, **self.header).status_code, 404)
