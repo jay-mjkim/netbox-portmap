@@ -1,25 +1,24 @@
 """
 The port map as a spreadsheet, and the labels that go on the cables.
 
-The columns follow the port-map sheets the team keeps by hand (SRC · Cable ·
-DST · Comment), with one difference that is the point of the download: the
-first column is the cable's NetBox id, and each end carries its interface id.
-A row in the file can then be found again in NetBox, and a change made from
-the sheet lands on the right cable rather than on "row 37" — which moves the
-moment somebody inserts a line above it.
+What is generic lives in the code: one row per cable with the NetBox cable id
+first and the two interface ids last, so a row in the file can be found again
+in NetBox and an edit lands on the right cable rather than on "row 37"; the
+upstream end on the left; labels that name the device, the port, where it
+sits and the cable's length.
 
-Direction and sides follow the sheets' convention: the upstream end is SRC
-(firewall over L3 over L2 and leaf over everything else), a management port
-is always the SRC of its own cable, and a link is written as "Down" from SRC
-to DST. Ties — a stack cable between two L3 switches — keep NetBox's A end as
-SRC. Labels read ``HOST, PORT, RACK U`` with the rack's floor prefix dropped,
-the way they are printed, and end with the cable's length.
+What is a house convention lives in the ``export`` setting: the words in the
+header row, how a rack is written on a label, how port names are shortened,
+what a cable type is called, which sheet a label goes on. The defaults are
+plain English and NetBox's own names; a site overrides what it keeps
+differently (see README, "Export profile").
 """
 
 from __future__ import annotations
 
 import re
 
+from dcim.choices import CableTypeChoices
 from dcim.models import CableTermination, Device, Interface
 from netbox.plugins import get_plugin_config
 
@@ -28,112 +27,124 @@ from . import data, media, xlsx
 SCOPES = ("hub", "rack", "site")
 KINDS = ("portmap", "labels")
 
-GROUPS = [(0, 0, "NetBox"), (1, 6, "SRC"), (7, 9, "Cable"), (10, 14, "DST"), (15, 17, "Comment"), (18, 20, "NetBox")]
-HEADERS = [
-    "Cable ID",
-    "종류",
-    "실장",
-    "Hostname",
-    "Port",
-    "Up/Down Link",
-    "Label(상)",
-    "Cable 타입",
-    "길이",
-    "구간",
-    "종류",
-    "실장",
-    "Hostname",
-    "Port",
-    "Label(하)",
-    "Confirmed",
-    "좌/상 or 우/하",
-    "Planned",
-    "SRC Itf ID",
-    "DST Itf ID",
-    "NetBox",
-]
-WIDTHS = [9, 20, 11, 18, 12, 12, 32, 20, 7, 7, 20, 11, 18, 12, 32, 10, 13, 9, 10, 10, 40]
-LABEL_HEADERS = ["Label(상)", "Label(하)", "길이", "Cable ID"]
-LABEL_WIDTHS = [34, 34, 7, 9]
-
-# What the sheets call a cable type. Anything not listed falls back to NetBox's own value.
-TYPE_LABELS = {
-    "aoc": "AOC HDR 200G",
-    "dac-active": "DAC HDR 200G",
-    "dac-passive": "DAC HDR 200G",
-    "cat6": "UTP CAT 6",
-    "cat6a": "UTP CAT 6a",
-    "mmf-om2": "LC-LC Mutimode 1G",
-    "mmf-om3": "LC-LC Mutimode 10G",
-    "mmf-om4": "LC-LC Mutimode 10G",
-    "smf": "LC-LC Singlemode 10G",
-    "smf-os2": "LC-LC Singlemode 10G",
-    "": "Stack Cable",
+# The sheet, column by column: NetBox id · A end · cable · B end · notes · NetBox ids and link.
+DEFAULT_PROFILE = {
+    "headers": [
+        "Cable ID",
+        "Role",
+        "Rack U",
+        "Device",
+        "Port",
+        "Direction",
+        "Label A",
+        "Type",
+        "Length",
+        "Span",
+        "Role",
+        "Rack U",
+        "Device",
+        "Port",
+        "Label B",
+        "Confirmed",
+        "Side",
+        "Planned",
+        "Interface A",
+        "Interface B",
+        "NetBox",
+    ],
+    "group_labels": ["NetBox", "A end", "Cable", "B end", "Notes", "NetBox"],
+    # The word written in the Direction column for every A -> B row; "" leaves it blank.
+    "direction": "",
+    # A rack on a label: "{rack} {position:g}U". ``seat_strip_prefix`` is a regex removed from
+    # the rack name first ("^\\d+F-" turns 3F-03-18 into 03-18).
+    "seat_format": "{rack} {position:g}U",
+    "seat_strip_prefix": "",
+    # A label: these parts, in this order, joined by the separator; empty parts are skipped.
+    "label_fields": ["device", "port", "seat", "length"],
+    "label_separator": ", ",
+    # Port names on labels: [regex, replacement] pairs tried in order; the first match wins.
+    "port_abbreviations": [],
+    # Cable type -> the name the sheets use. Types not listed use NetBox's own label.
+    "cable_type_labels": {},
+    # Which label sheet a cable goes on, by the start of its NetBox type, in this order.
+    "label_sheets": [["AOC", ["aoc"]], ["DAC", ["dac-"]], ["UTP", ["cat"]], ["Fiber", ["mmf", "smf"]]],
+    "label_sheet_other": "Other",
+    "label_headers": ["Label A", "Label B", "Length", "Cable ID"],
+    "confirmed_mark": "✅",
+    "planned_mark": "Planned",
+    # Which end is written first: the lower tier. Regexes on the role name, upstream first; a
+    # role that matches none is an end device (a server, a PDU) and goes last.
+    "tiers": [r"firewall|\bfw\b|router", r"\bl3\b|spine|core", r"\bl2\b|leaf|access|\btor\b", r"switch"],
 }
-# Which label sheet a cable goes on, by the start of its NetBox type.
-FAMILIES = (("AOC", ("aoc",)), ("DAC", ("dac-",)), ("UTP", ("cat",)), ("LC", ("mmf", "smf")))
-OTHER = "기타"
-
-# Upstream first. A role whose name matches none of these is an end device: a server, a PDU.
-TIERS = ((r"firewall|\bfw\b|router", 0), (r"\bl3\b|spine|core", 1), (r"\bl2\b|leaf|access|\btor\b", 2), (r"switch", 3))
+WIDTHS = [9, 20, 11, 18, 14, 12, 34, 20, 7, 7, 20, 11, 18, 14, 34, 10, 13, 9, 11, 11, 40]
+LABEL_WIDTHS = [36, 36, 7, 9]
 END_DEVICE = 9
-_CISCO = r"^(?:GigabitEthernet|TenGigabitEthernet|TwentyFiveGigE|FortyGigabitEthernet|HundredGigE)\d+/"
-PORT_SHORT = (
-    (re.compile(_CISCO + r"0/(\d+)$"), r"\1"),
-    (re.compile(_CISCO + r"1/(\d+)$"), r"+\1"),
-    (re.compile(r"^port(\d+)$"), r"\1"),
-)
 
 
-def tier_of(role: str | None) -> int:
+def profile() -> dict:
+    """The defaults with the deployment's overrides on top."""
+    overrides = get_plugin_config("netbox_portmap", "export") or {}
+    return {**DEFAULT_PROFILE, **{k: v for k, v in overrides.items() if v is not None}}
+
+
+def tier_of(role: str | None, prof: dict) -> int:
     name = (role or "").lower()
-    for pattern, tier in TIERS:
+    for tier, pattern in enumerate(prof["tiers"]):
         if re.search(pattern, name):
             return tier
     return END_DEVICE
 
 
-def short_port(name: str) -> str:
-    """``GigabitEthernet1/0/7`` -> ``7``, ``TenGigabitEthernet1/1/2`` -> ``+2``, ``port17`` -> ``17``."""
-    for pattern, repl in PORT_SHORT:
-        if pattern.match(name or ""):
-            return pattern.sub(repl, name)
+def short_port(name: str, prof: dict) -> str:
+    for pattern, repl in prof["port_abbreviations"]:
+        if re.match(pattern, name or ""):
+            return re.sub(pattern, repl, name)
     return name or ""
 
 
-def type_label(cable_type: str | None) -> str:
-    key = cable_type or ""
-    labels = get_plugin_config("netbox_portmap", "cable_type_labels") or {}
-    return labels.get(key, TYPE_LABELS.get(key, key))
+def _netbox_type_labels() -> dict:
+    """NetBox's own names for cable types; CHOICES is grouped, so flatten it."""
+    out = {}
+    for value, label in CableTypeChoices.CHOICES:
+        if isinstance(label, list | tuple):
+            out.update({v: str(lbl) for v, lbl, *_ in label})
+        else:
+            out[value] = str(label)
+    return out
 
 
-def family_of(cable_type: str | None) -> str:
+def type_label(cable_type: str | None, prof: dict) -> str:
     key = cable_type or ""
-    for family, prefixes in FAMILIES:
+    if key in prof["cable_type_labels"]:
+        return prof["cable_type_labels"][key]
+    return _netbox_type_labels().get(key, key)
+
+
+def sheet_for(cable_type: str | None, prof: dict) -> str:
+    key = cable_type or ""
+    for name, prefixes in prof["label_sheets"]:
         if any(key.startswith(p) for p in prefixes):
-            return family
-    return OTHER
+            return name
+    return prof["label_sheet_other"]
 
 
-def _seat(summary: dict | None) -> str:
-    """Where the device sits, the way the sheets say it: ``03-18 42U`` — the rack with its
-    floor prefix dropped (``3F-03-18`` is written ``03-18`` on a label)."""
+def _seat(summary: dict | None, prof: dict) -> str:
     if not summary or not summary.get("rack"):
         return ""
     rack = summary["rack"]
-    strip = get_plugin_config("netbox_portmap", "seat_strip_prefix")
-    if strip:
-        rack = re.sub(strip, "", rack)
+    if prof["seat_strip_prefix"]:
+        rack = re.sub(prof["seat_strip_prefix"], "", rack)
     pos = summary.get("position")
-    return f"{rack} {pos:g}U" if pos is not None else rack
+    if pos is None:
+        return rack
+    return prof["seat_format"].format(rack=rack, position=pos)
 
 
-def _label(summary: dict | None, port: str, length: str = "") -> str:
-    """``ICN-CON-FW-01, x1, 03-18 42U, 5M`` — what is printed on the cable's tag: the device,
-    the port, where it sits, and the cable's length so the right reel is picked up."""
+def _label(summary: dict | None, port: str, length: str, prof: dict) -> str:
     if not summary:
         return ""
-    return ", ".join(part for part in (summary.get("name", ""), port, _seat(summary), length) if part)
+    values = {"device": summary.get("name", ""), "port": port, "seat": _seat(summary, prof), "length": length}
+    return prof["label_separator"].join(v for v in (values.get(f, "") for f in prof["label_fields"]) if v)
 
 
 def _length(cable) -> str:
@@ -146,46 +157,54 @@ def _natural(name: str):
     return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", name or "")]
 
 
-def _row(cable, src: Interface, dst: Interface, hub: dict, far: dict, direction: str, absolute) -> list:
-    sp, dp = short_port(src.name), short_port(dst.name)
-    length = _length(cable)
-    return [
-        cable.pk,
-        hub.get("role") or "",
-        _seat(hub),
-        hub["name"],
-        sp,
-        direction,
-        _label(hub, sp, length),
-        type_label(cable.type),
-        length,
-        "",
-        far.get("role") or "",
-        _seat(far),
-        far["name"],
-        dp,
-        _label(far, dp, length),
-        "✅" if cable.status == "connected" else "",
-        "",
-        "Planned" if cable.status == "planned" else "",
-        src.pk,
-        dst.pk,
-        absolute(f"/dcim/cables/{cable.pk}/"),
-    ]
+class Row:
+    """One cable as a row, built once and read for either sheet."""
+
+    def __init__(self, cable, src: Interface, dst: Interface, hub: dict, far: dict, prof: dict, absolute):
+        sp, dp = short_port(src.name, prof), short_port(dst.name, prof)
+        length = _length(cable)
+        self.cable_type = cable.type or ""
+        self.cells = [
+            cable.pk,
+            hub.get("role") or "",
+            _seat(hub, prof),
+            hub["name"],
+            sp,
+            prof["direction"],
+            _label(hub, sp, length, prof),
+            type_label(cable.type, prof),
+            length,
+            "",
+            far.get("role") or "",
+            _seat(far, prof),
+            far["name"],
+            dp,
+            _label(far, dp, length, prof),
+            prof["confirmed_mark"] if cable.status == "connected" else "",
+            "",
+            prof["planned_mark"] if cable.status == "planned" else "",
+            src.pk,
+            dst.pk,
+            absolute(f"/dcim/cables/{cable.pk}/"),
+        ]
+
+    def label_cells(self) -> list:
+        return [self.cells[6], self.cells[14], self.cells[8], self.cells[0]]
 
 
-def _orient(a: Interface, b: Interface, summaries: dict) -> tuple[Interface, Interface]:
-    """Which end is SRC: a management port of its own cable; otherwise the upstream tier;
-    a tie keeps the A end."""
+def _orient(a: Interface, b: Interface, summaries: dict, prof: dict) -> tuple[Interface, Interface]:
+    """Which end is written first: a management port of its own cable; otherwise the upstream
+    tier; a tie keeps NetBox's A end."""
     if a.mgmt_only != b.mgmt_only:
         return (a, b) if a.mgmt_only else (b, a)
-    ta, tb = tier_of(summaries[a.device_id].get("role")), tier_of(summaries[b.device_id].get("role"))
+    ta = tier_of(summaries[a.device_id].get("role"), prof)
+    tb = tier_of(summaries[b.device_id].get("role"), prof)
     return (b, a) if tb < ta else (a, b)
 
 
-def entries_for(devices, absolute=lambda path: path) -> list[list]:
-    """Every cable touching one of ``devices``, once each, as port-map rows: upstream tier
-    first, then the SRC device's rack and position (top of the rack first), then port."""
+def rows_for(devices, prof: dict, absolute=lambda path: path) -> list[Row]:
+    """Every cable touching one of ``devices``, once each: upstream tier first, then the first
+    end's rack and position (top of the rack first), then port."""
     devices = list(devices)
     by_pk = {d.pk: d for d in devices}
     interfaces = (
@@ -211,10 +230,10 @@ def entries_for(devices, absolute=lambda path: path) -> list[list]:
     for side in ends.values():
         a, b = itf_by_id.get(side.get("A")), itf_by_id.get(side.get("B"))
         if a is not None and b is not None:
-            pairs.append(_orient(a, b, summaries))
+            pairs.append(_orient(a, b, summaries, prof))
     pairs.sort(
         key=lambda e: (
-            tier_of(summaries[e[0].device_id].get("role")),
+            tier_of(summaries[e[0].device_id].get("role"), prof),
             summaries[e[0].device_id].get("rack") or "",
             -(summaries[e[0].device_id].get("position") or 0),
             e[0].device.name or "",
@@ -222,13 +241,13 @@ def entries_for(devices, absolute=lambda path: path) -> list[list]:
         )
     )
     return [
-        _row(src.cable, src, dst, summaries[src.device_id], summaries[dst.device_id], "Down", absolute)
+        Row(src.cable, src, dst, summaries[src.device_id], summaries[dst.device_id], prof, absolute)
         for src, dst in pairs
     ]
 
 
-def hub_rows(device: Device, absolute=lambda path: path) -> list[list]:
-    """This device's cables in the order the workbench draws its ports, the device as SRC."""
+def hub_rows(device: Device, prof: dict, absolute=lambda path: path) -> list[Row]:
+    """This device's cables in the order the workbench draws its ports, the device first."""
     ports = data.device_ports(device)
     cabled = sorted((p for p in ports["ports"] if p["cable"]), key=lambda p: (p.get("col", 0), p.get("row", 0)))
     itfs = Interface.objects.filter(pk__in=[p["id"] for p in cabled]).select_related("cable", "device").in_bulk()
@@ -246,7 +265,7 @@ def hub_rows(device: Device, absolute=lambda path: path) -> list[list]:
         if far is None:
             continue
         src = itfs[p["id"]]
-        rows.append(_row(src.cable, src, far, hub, far_summaries[far.device_id], "Down", absolute))
+        rows.append(Row(src.cable, src, far, hub, far_summaries[far.device_id], prof, absolute))
     return rows
 
 
@@ -264,30 +283,25 @@ def _title(device: Device, scope: str) -> str:
     return device.name or str(device.pk)
 
 
-def _family_of_row(row: list) -> str:
-    """Rows carry the sheet's type label; map it back for the label sheets."""
-    label = row[7]
-    labels = {**TYPE_LABELS, **(get_plugin_config("netbox_portmap", "cable_type_labels") or {})}
-    for key, value in labels.items():
-        if value == label:
-            return family_of(key)
-    return family_of(label)
-
-
 def workbook(device: Device, absolute=lambda path: path, scope: str = "hub", kind: str = "portmap") -> bytes:
     """``portmap``: one sheet, the hub (faceplate order) or every cable on its rack / site.
     ``labels``: the two label texts and the length per cable, one sheet per cable family."""
-    rows = hub_rows(device, absolute) if scope == "hub" else entries_for(_devices(device, scope), absolute)
+    prof = profile()
+    rows = hub_rows(device, prof, absolute) if scope == "hub" else rows_for(_devices(device, scope), prof, absolute)
     if kind == "labels":
         sheets = []
-        for family in [f for f, _ in FAMILIES] + [OTHER]:
-            body = [[r[6], r[14], r[8], r[0]] for r in rows if _family_of_row(r) == family]
+        for name in [s[0] for s in prof["label_sheets"]] + [prof["label_sheet_other"]]:
+            body = [r.label_cells() for r in rows if sheet_for(r.cable_type, prof) == name]
             if body:
-                sheets.append(xlsx.Sheet(family, [LABEL_HEADERS] + body, LABEL_WIDTHS))
+                sheets.append(xlsx.Sheet(name, [prof["label_headers"]] + body, LABEL_WIDTHS))
         if not sheets:
-            sheets.append(xlsx.Sheet("Labels", [LABEL_HEADERS], LABEL_WIDTHS))
+            sheets.append(xlsx.Sheet("Labels", [prof["label_headers"]], LABEL_WIDTHS))
         return xlsx.workbook_sheets(sheets)
-    return xlsx.workbook(_title(device, scope), [HEADERS] + rows, widths=WIDTHS, group_row=GROUPS)
+    groups = [(0, 0), (1, 6), (7, 9), (10, 14), (15, 17), (18, 20)]
+    group_row = [(a, b, label) for (a, b), label in zip(groups, prof["group_labels"], strict=True)]
+    return xlsx.workbook(
+        _title(device, scope), [prof["headers"]] + [r.cells for r in rows], widths=WIDTHS, group_row=group_row
+    )
 
 
 def filename(device: Device, today, scope: str = "hub", kind: str = "portmap") -> str:

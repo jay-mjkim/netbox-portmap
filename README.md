@@ -105,9 +105,41 @@ PLUGINS_CONFIG = {
 }
 ```
 
-Export conventions are settings too: `seat_strip_prefix` (regex dropped from a rack name on a
-label, default `^\d+F-` so `3F-03-18` prints as `03-18`) and `cable_type_labels` (NetBox cable
-type → the name the sheets use; the built-in table covers AOC, DAC, CAT6/6a, OM2/OM3/OM4 and SMF).
+### Export profile
+
+The Excel download is generic by default: plain-English headers, NetBox's own port and cable
+type names, no direction word. What a site keeps differently goes in `export`, a dict layered
+over `netbox_portmap.export.DEFAULT_PROFILE` — any key may be overridden, the rest stay:
+
+```python
+PLUGINS_CONFIG["netbox_portmap"]["export"] = {
+    "headers": ["Cable ID", "종류", "실장", "Hostname", "Port", "Up/Down Link", "Label(상)",
+                "Cable 타입", "길이", "구간", "종류", "실장", "Hostname", "Port", "Label(하)",
+                "Confirmed", "좌/상 or 우/하", "Planned", "SRC Itf ID", "DST Itf ID", "NetBox"],
+    "group_labels": ["NetBox", "SRC", "Cable", "DST", "Comment", "NetBox"],
+    "direction": "Down",                 # written in the Direction column of every row
+    "seat_strip_prefix": r"^\d+F-",     # 3F-03-18 is printed 03-18
+    "seat_format": "{rack} {position:g}U",
+    "label_fields": ["device", "port", "seat", "length"],   # joined by label_separator
+    "port_abbreviations": [              # [regex, replacement], first match wins
+        [r"^(?:GigabitEthernet|TenGigabitEthernet|TwentyFiveGigE)\d+/0/(\d+)$", r"\1"],
+        [r"^(?:TenGigabitEthernet|TwentyFiveGigE)\d+/1/(\d+)$", r"+\1"],
+        [r"^port(\d+)$", r"\1"],
+    ],
+    "cable_type_labels": {"aoc": "AOC HDR 200G", "cat6": "UTP CAT 6", "cat6a": "UTP CAT 6a",
+                          "mmf-om3": "LC-LC Mutimode 10G", "mmf-om2": "LC-LC Mutimode 1G",
+                          "smf": "LC-LC Singlemode 10G", "": "Stack Cable"},
+    "label_sheets": [["AOC", ["aoc"]], ["DAC", ["dac-"]], ["UTP", ["cat"]], ["LC", ["mmf", "smf"]]],
+    "label_sheet_other": "기타",
+    "label_headers": ["Label(상)", "Label(하)", "길이", "Cable ID"],
+    "tiers": [r"firewall|\bfw\b|router", r"\bl3\b|spine|core", r"\bl2\b|leaf|access|\btor\b", r"switch"],
+}
+```
+
+What never changes: column A is the cable's NetBox id, the last three columns are the two
+interface ids and the link, the upstream end (lowest tier; a management port of its own cable)
+is written first, rows run upstream tier → rack → position → port, and a label is the device,
+the port, where it sits and the cable's length.
 
 ## Permissions
 
