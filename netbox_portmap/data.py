@@ -16,7 +16,10 @@ def device_summary(device: Device) -> dict:
         "url": device.get_absolute_url(),
         "site": device.site.name if device.site_id else None,
         "rack": device.rack.name if device.rack_id else None,
+        "rack_id": device.rack_id,
+        "rack_height": device.rack.u_height if device.rack_id else None,
         "position": float(device.position) if device.position is not None else None,
+        "u_height": float(device.device_type.u_height),
         "face": device.face or None,
         "device_type": str(device.device_type),
         "role": str(device.role) if device.role_id else None,
@@ -26,12 +29,18 @@ def device_summary(device: Device) -> dict:
 def _describe_peer(peer) -> dict:
     if not isinstance(peer, Interface):
         return {"kind": peer._meta.model_name, "name": str(peer), "device_id": getattr(peer, "device_id", None)}
+    device = peer.device
     return {
         "kind": "interface",
         "id": peer.pk,
         "name": peer.name,
         "device_id": peer.device_id,
-        "device": peer.device.name,
+        "device": device.name,
+        "rack": device.rack.name if device.rack_id else None,
+        "rack_id": device.rack_id,
+        "rack_height": device.rack.u_height if device.rack_id else None,
+        "position": float(device.position) if device.position is not None else None,
+        "u_height": float(device.device_type.u_height),
         "url": peer.get_absolute_url(),
     }
 
@@ -61,7 +70,7 @@ def _peers_of(interfaces) -> dict[int, dict]:
             far[term.cable_id] = term
     # Interfaces are the common case: fetch them in one query with their devices.
     itf_ct = {t.termination_type_id for t in far.values() if t.termination_type.model == "interface"}
-    interfaces_by_id = Interface.objects.select_related("device").in_bulk(
+    interfaces_by_id = Interface.objects.select_related("device", "device__rack", "device__device_type").in_bulk(
         [t.termination_id for t in far.values() if t.termination_type_id in itf_ct]
     )
     for cable_id, term in far.items():

@@ -630,6 +630,7 @@
         el("span", {}, cableText(cab) || "no type / length"),
         cab.label ? el("span", { class: "text-muted small pm-label", title: cab.label }, cab.label) : null),
       end(b),
+      elevation(a.device, b.device.rack ? b.device : (me.port.peer && me.port.peer.rack ? me.port.peer : b.device)),
       actions,
     );
     if (count) {
@@ -637,6 +638,42 @@
       const i = order.findIndex((p) => p.id === hubPort);
       count.textContent = i >= 0 ? `${i + 1} / ${order.length} on the hub` : "";
     }
+  }
+
+  /** Where the two ends sit: the rack(s) drawn as a strip, the two devices marked at their U,
+   *  and — in different racks — how many racks apart. Nothing else; the eye reads it as "low
+   *  in 03-03, high in 03-12, nine racks over". */
+  const rackIndex = (name) => { const m = /(\d+)\s*$/.exec(name || ""); return m ? Number(m[1]) : null; };
+  function elevation(a, b) {
+    if (!a || !b || !a.rack || !b.rack || a.position == null || b.position == null) return null;
+    const same = a.rack_id != null && a.rack_id === b.rack_id;
+    const racks = same ? [{ name: a.rack, height: a.rack_height || 42, devices: [a, b] }]
+      : [{ name: a.rack, height: a.rack_height || 42, devices: [a] }, { name: b.rack, height: b.rack_height || 42, devices: [b] }];
+    const perU = 2.6, w = 22, gap = 46, top = 16, bottom = 16;
+    const tall = Math.max(...racks.map((r) => r.height)) * perU;
+    const svg = svgEl("svg", { class: "pm-elev", width: racks.length * (w + gap) + 60, height: tall + top + bottom, role: "img", "aria-label": `${a.name} ${a.rack} U${a.position}; ${b.name} ${b.rack} U${b.position}` });
+    racks.forEach((r, i) => {
+      const x0 = 30 + i * (w + gap), h = r.height * perU;
+      svg.append(svgEl("rect", { x: x0, y: top + tall - h, width: w, height: h, class: "pm-elev-rack" }));
+      // A tick every 10U, numbered from the bottom like the rack itself.
+      for (let u = 10; u < r.height; u += 10) {
+        const y = top + tall - u * perU;
+        svg.append(svgEl("line", { x1: x0 - 3, x2: x0, y1: y, y2: y, class: "pm-elev-tick" }));
+      }
+      const name = svgEl("text", { x: x0 + w / 2, y: top + tall + 12, class: "pm-elev-name", "text-anchor": "middle" }); name.textContent = r.name; svg.append(name);
+      for (const d of r.devices) {
+        const uh = Math.max(d.u_height || 1, 1), y = top + tall - (d.position - 1 + uh) * perU, h = Math.max(uh * perU, 3);
+        svg.append(svgEl("rect", { x: x0 + 1, y, width: w - 2, height: h, class: "pm-elev-dev" + (d === a ? " a" : " b") }));
+        const t = svgEl("text", { x: x0 + w + 5, y: y + h / 2 + 3.5, class: "pm-elev-u" }); t.textContent = `U${d.position}`; svg.append(t);
+      }
+    });
+    if (!same) {
+      const x1 = 30 + w / 2, x2 = 30 + (w + gap) + w / 2, y = top - 3;
+      svg.append(svgEl("path", { d: `M${x1} ${top + tall - (a.position - 1 + (a.u_height || 1)) * perU} V${y} H${x2} V${top + tall - (b.position - 1 + (b.u_height || 1)) * perU}`, class: "pm-elev-run" }));
+      const ia = rackIndex(a.rack), ib = rackIndex(b.rack), apart = ia != null && ib != null ? Math.abs(ia - ib) : null;
+      if (apart) { const t = svgEl("text", { x: (x1 + x2) / 2, y: y - 2, class: "pm-elev-name", "text-anchor": "middle" }); t.textContent = `${apart} rack${apart > 1 ? "s" : ""} apart`; svg.append(t); }
+    }
+    return el("div", { class: "pm-elev-wrap" }, svg);
   }
 
   // --------------------------------------------------------------- arming

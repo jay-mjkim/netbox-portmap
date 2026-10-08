@@ -124,3 +124,15 @@ button.pm-chip:hover { border-color: var(--tblr-primary); }
 .pm-tip { position: absolute; z-index: 1080; max-width: 320px; padding: 6px 9px; font-size: 12px; line-height: 1.35; border-radius: 4px; background: var(--tblr-gray-800, #1f2937); color: #f8fafc; box-shadow: 0 4px 12px rgba(0,0,0,.2); pointer-events: none; white-space: pre-wrap; }
 .pm-tip-head { font-weight: 600; }
 .pm-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+
+/* The elevation under the inspector: rack outlines, the two devices filled, a tray run over
+   the top when they are in different racks. */
+.pm-elev-wrap { margin-top: 10px; overflow-x: auto; }
+.pm-elev { display: block; max-width: 100%; }
+.pm-elev-rack { fill: var(--tblr-bg-surface-secondary); stroke: var(--tblr-border-color); stroke-width: 1; }
+.pm-elev-tick { stroke: var(--tblr-border-color); stroke-width: 1; }
+.pm-elev-dev { fill: var(--tblr-primary); }
+.pm-elev-dev.b { fill: var(--pm-on); }
+.pm-elev-u { font-size: 10px; fill: var(--tblr-body-color); font-family: var(--tblr-font-monospace, monospace); }
+.pm-elev-name { font-size: 10px; fill: var(--tblr-secondary); }
+.pm-elev-run { fill: none; stroke: var(--tblr-primary); stroke-width: 1.4; stroke-dasharray: 3 3; opacity: .8; }

@@ -73,6 +73,11 @@ class ReadEndpointsTest(APITestCase):
         self.assertEqual(first["cable"], self.f.cable.pk)
         self.assertEqual(first["peer"]["device"], "srv1")
         self.assertEqual(first["peer"]["id"], self.f.srv1_eno0.pk)
+        # Where the far end sits, so the inspector can draw it without loading the device.
+        self.assertEqual(
+            (first["peer"]["rack"], first["peer"]["position"], first["peer"]["u_height"]), ("R-01", 10.0, 2.0)
+        )
+        self.assertEqual((body["device"]["rack_height"], body["device"]["u_height"]), (42, 1.0))
         self.assertEqual(first["cable_type"], "cat6")
         self.assertIn("row", first)
         self.assertIn("col", first)
@@ -348,9 +353,59 @@ class ViewOnlyCommitTest(APITestCase):
         self.assertEqual(res.status_code, 403)
 
 
+MOTIF_PROFILE = {
+    "headers": [
+        "Cable ID",
+        "종류",
+        "실장",
+        "Hostname",
+        "Port",
+        "Up/Down Link",
+        "Label(상)",
+        "Cable 타입",
+        "길이",
+        "구간",
+        "종류",
+        "실장",
+        "Hostname",
+        "Port",
+        "Label(하)",
+        "Confirmed",
+        "좌/상 or 우/하",
+        "Planned",
+        "SRC Itf ID",
+        "DST Itf ID",
+        "NetBox",
+    ],
+    "group_labels": ["NetBox", "SRC", "Cable", "DST", "Comment", "NetBox"],
+    "direction": "Down",
+    "seat_strip_prefix": r"^\d+F-",
+    "port_abbreviations": [
+        [r"^(?:GigabitEthernet|TenGigabitEthernet|TwentyFiveGigE)\d+/0/(\d+)$", r"\1"],
+        [r"^(?:TenGigabitEthernet|TwentyFiveGigE)\d+/1/(\d+)$", r"+\1"],
+    ],
+    "cable_type_labels": {"cat6": "UTP CAT 6", "cat6a": "UTP CAT 6a", "aoc": "AOC HDR 200G"},
+    "label_sheets": [["AOC", ["aoc"]], ["UTP", ["cat"]], ["LC", ["mmf", "smf"]]],
+    "label_sheet_other": "기타",
+    "label_headers": ["Label(상)", "Label(하)", "길이", "Cable ID"],
+}
+
+
+def with_profile(prof):
+    from django.conf import settings
+    from django.test import override_settings
+
+    config = {
+        **settings.PLUGINS_CONFIG,
+        "netbox_portmap": {**settings.PLUGINS_CONFIG["netbox_portmap"], "export": prof},
+    }
+    return override_settings(PLUGINS_CONFIG=config)
+
+
 class ExportTest(APITestCase):
-    """The port map as a file: the first column is the cable's NetBox id, the rest the team's
-    sheet — SRC · Cable · DST · Comment — with the interface ids and link at the end."""
+    """The port map as a file: the first column is the cable's NetBox id, the last three the
+    interface ids and the link; between them the sheet — plain English unless a profile says
+    otherwise."""
 
     user_permissions = VIEW_PERMS
 
@@ -396,18 +451,18 @@ class ExportTest(APITestCase):
         self.assertIn("sw1_portmap_", res["Content-Disposition"])
         group, header, *body = self.sheet(res)
         self.assertEqual(
-            (group["A"], group["B"], group["H"], group["K"], group["P"]), ("NetBox", "SRC", "Cable", "DST", "Comment")
+            (group["A"], group["B"], group["H"], group["K"], group["P"]), ("NetBox", "A end", "Cable", "B end", "Notes")
         )
         self.assertEqual(
             (header["A"], header["E"], header["G"], header["S"], header["T"]),
-            ("Cable ID", "Port", "Label(상)", "SRC Itf ID", "DST Itf ID"),
+            ("Cable ID", "Port", "Label A", "Interface A", "Interface B"),
         )
         [row] = body
         self.assertEqual(row["A"], str(self.f.cable.pk))
-        # Ports in the short form the labels use: GigabitEthernet1/0/1 -> 1.
-        self.assertEqual((row["D"], row["E"], row["F"]), ("sw1", "1", "Down"))
-        self.assertEqual(row["G"], "sw1, 1, R-01 40U")
-        self.assertEqual((row["H"], row["P"], row.get("R", "")), ("UTP CAT 6", "✅", ""))
+        # NetBox's own names, no direction word, no abbreviation: nothing site-specific by default.
+        self.assertEqual((row["D"], row["E"], row.get("F", "")), ("sw1", "GigabitEthernet1/0/1", ""))
+        self.assertEqual(row["G"], "sw1, GigabitEthernet1/0/1, R-01 40U")
+        self.assertEqual((row["H"], row["P"], row.get("R", "")), ("CAT6", "✅", ""))
         self.assertEqual((row["M"], row["N"], row["O"]), ("srv1", "eno0", "srv1, eno0, R-01 10U"))
         self.assertEqual((row["S"], row["T"]), (str(self.f.sw_ports[0].pk), str(self.f.srv1_eno0.pk)))
         self.assertTrue(row["U"].endswith(f"/dcim/cables/{self.f.cable.pk}/"))
@@ -419,10 +474,22 @@ class ExportTest(APITestCase):
         self.assertEqual(self.sheet_names(res), ["UTP"])
         header, row = self.sheet(res)
         self.assertEqual(
-            (header["A"], header["B"], header["C"], header["D"]), ("Label(상)", "Label(하)", "길이", "Cable ID")
+            (header["A"], header["B"], header["C"], header["D"]), ("Label A", "Label B", "Length", "Cable ID")
         )
         self.assertEqual((row.get("C", ""), row["D"]), ("", str(self.f.cable.pk)))
-        self.assertEqual({row["A"], row["B"]}, {"sw1, 1, R-01 40U", "srv1, eno0, R-01 10U"})
+
+    def test_a_profile_turns_it_into_the_house_sheet(self):
+        """The same cable, written the way one site keeps its port map: Korean headers, the
+        port shortened, the type by its sheet name, Down in the direction column."""
+        with with_profile(MOTIF_PROFILE):
+            res = self.export()
+            labels = self.export(scope="site", kind="labels")
+        group, header, row = self.sheet(res)
+        self.assertEqual((group["B"], group["K"]), ("SRC", "DST"))
+        self.assertEqual((header["B"], header["G"], header["S"]), ("종류", "Label(상)", "SRC Itf ID"))
+        self.assertEqual((row["E"], row["F"], row["G"], row["H"]), ("1", "Down", "sw1, 1, R-01 40U", "UTP CAT 6"))
+        self.assertEqual(self.sheet_names(labels), ["UTP"])
+        self.assertEqual(self.sheet(labels)[0]["A"], "Label(상)")
 
     def test_an_unknown_scope_or_kind_is_refused(self):
         self.assertEqual(self.export(scope="building").status_code, 400)
@@ -460,15 +527,15 @@ class ExportScopeTest(APITestCase):
         self.assertEqual(
             sorted(r["A"] for r in rows), sorted(str(c.pk) for c in (self.f.cable, self.second, self.mgmt))
         )
-        # The L2 switch is upstream of the servers, so it is SRC — whichever end NetBox calls A.
+        # The L2 switch is upstream of the servers, so it is written first — whichever end NetBox calls A.
         by_id = {r["A"]: r for r in rows}
         self.assertEqual((by_id[str(self.second.pk)]["D"], by_id[str(self.second.pk)]["M"]), ("sw1", "srv2"))
-        # A management port is SRC of its own cable, upstream or not; the label ends with the length.
+        # A management port is the first end of its own cable, upstream or not; labels end with the length.
         self.assertEqual((by_id[str(self.mgmt.pk)]["D"], by_id[str(self.mgmt.pk)]["E"]), ("sw1", "mgmt0"))
         self.assertEqual(by_id[str(self.mgmt.pk)]["G"], "sw1, mgmt0, R-01 40U, 3M")
         self.assertEqual(by_id[str(self.mgmt.pk)]["O"], "srv1, eno1, R-01 10U, 3M")
         # Switch rows before server rows; within the switch, ports in natural order.
-        self.assertEqual([r["E"] for r in rows], ["1", "2", "mgmt0"])
+        self.assertEqual([r["E"] for r in rows], ["GigabitEthernet1/0/1", "GigabitEthernet1/0/2", "mgmt0"])
 
     def test_rack_keeps_to_the_rack(self):
         self.assertEqual(len(self.rows(self.f.sw.pk, "rack")), 3)
